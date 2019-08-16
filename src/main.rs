@@ -1,9 +1,13 @@
 #![recursion_limit = "256"]
 #![feature(async_await, proc_macro_hygiene)]
+
+mod client;
+mod command;
+
 use std::{io, os::unix::prelude::*, path::PathBuf, process::Command, thread, time::Duration};
 
 use derive_more::Display;
-use futures::{stream, StreamExt};
+use futures::{prelude::*, stream};
 use rand::prelude::*;
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
@@ -14,18 +18,32 @@ use tokio::{
     sync::mpsc::{self, Receiver},
     timer::Interval,
 };
-use tokio_signal::unix::{Signal, SIGHUP, SIGINT, SIGTERM};
+use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
 use walkdir::{DirEntry, WalkDir};
+
+use command::command_stream;
 
 async fn run(handle: current_thread::Handle) -> Result<(), Error> {
     let opt = Opt::from_args();
+    match opt {
+        Opt::Daemon(opt) => run_server(handle, opt).await?,
+        Opt::Client(cmd) => client::run(cmd).await.context(Ipc)?,
+    }
+
+    Ok(())
+}
+
+async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<(), Error> {
+    let commands = command_stream().context(Ipc)?.fuse();
+    futures::pin_mut!(commands);
+
     let mut wps: Vec<String> = get_wallpapers(handle.clone(), opt.wp_dir.clone())
         .collect()
         .await;
 
     let refresh = Interval::new_interval(Duration::from_secs(opt.refresh_interval)).map(|_| ());
-    let hup = register_signal(SIGHUP)?;
-    let mut refresh = stream::select(refresh, hup).fuse();
+    let (refresh_manual_tx, refresh_manual_rx) = mpsc::channel(4);
+    let mut refresh = stream::select(refresh, refresh_manual_rx).fuse();
 
     let mut rescan = Interval::new_interval(Duration::from_secs(opt.rescan_interval)).fuse();
 
@@ -61,12 +79,27 @@ async fn run(handle: current_thread::Handle) -> Result<(), Error> {
             _ = terminate.next() => {
                 break Ok(());
             }
+            req = commands.next() => {
+                if let Some(req) = req {
+                    let mut tx = refresh_manual_tx.clone();
+                    let _ = handle.spawn(async move {
+                        use command::Command::*;
+                        match req.cmd {
+                            Refresh => {
+                                let _ = tx.send(()).await;
+                                let _ = req.reply(command::Reply::Ok).await;
+                            }
+                        }
+                    });
+
+                }
+            }
         }
     }
 }
 
 #[derive(StructOpt, Debug)]
-struct Opt {
+struct DaemonOpt {
     #[structopt(long = "wp-dir")]
     wp_dir: PathBuf,
 
@@ -78,6 +111,15 @@ struct Opt {
 
     #[structopt(long = "mode", default_value = "Fill")]
     mode: Mode,
+}
+
+#[derive(StructOpt, Debug)]
+enum Opt {
+    #[structopt(name = "daemon")]
+    Daemon(DaemonOpt),
+
+    #[structopt(name = "send")]
+    Client(client::Subcmd),
 }
 
 fn register_signal(signo: i32) -> Result<Signal, Error> {
@@ -180,6 +222,9 @@ enum Error {
 
     #[snafu(display("Can't decode json received from swaymsg: {}", source))]
     Json { source: serde_json::Error },
+
+    #[snafu(display("Error while doing ipc: {}", source))]
+    Ipc { source: command::IpcError },
 }
 
 fn main() {
