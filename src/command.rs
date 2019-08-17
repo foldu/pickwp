@@ -30,6 +30,7 @@ impl Request {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Command {
     Refresh,
+    Rescan,
 }
 
 #[derive(Snafu, Debug)]

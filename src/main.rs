@@ -1,4 +1,4 @@
-#![recursion_limit = "256"]
+#![recursion_limit = "1024"]
 #![feature(async_await, proc_macro_hygiene)]
 
 mod client;
@@ -7,7 +7,7 @@ mod command;
 use std::{io, os::unix::prelude::*, path::PathBuf, process::Command, thread, time::Duration};
 
 use derive_more::Display;
-use futures::{prelude::*, stream};
+use futures::{pin_mut, prelude::*, stream};
 use rand::prelude::*;
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
@@ -35,17 +35,18 @@ async fn run(handle: current_thread::Handle) -> Result<(), Error> {
 
 async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<(), Error> {
     let commands = command_stream().context(Ipc)?.fuse();
-    futures::pin_mut!(commands);
+    pin_mut!(commands);
 
     let mut wps: Vec<String> = get_wallpapers(handle.clone(), opt.wp_dir.clone())
         .collect()
         .await;
 
-    let refresh = Interval::new_interval(Duration::from_secs(opt.refresh_interval)).map(|_| ());
-    let (refresh_manual_tx, refresh_manual_rx) = mpsc::channel(4);
-    let mut refresh = stream::select(refresh, refresh_manual_rx).fuse();
+    let (refresh_manual_tx, refresh) =
+        preemptable_interval(Duration::from_secs(opt.refresh_interval));
+    let mut refresh = refresh.fuse();
 
-    let mut rescan = Interval::new_interval(Duration::from_secs(opt.rescan_interval)).fuse();
+    let (rescan_manual_tx, rescan) = preemptable_interval(Duration::from_secs(opt.rescan_interval));
+    let mut rescan = rescan.fuse();
 
     let int = register_signal(SIGINT)?;
     let term = register_signal(SIGTERM)?;
@@ -81,12 +82,18 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
             }
             req = commands.next() => {
                 if let Some(req) = req {
-                    let mut tx = refresh_manual_tx.clone();
+                    log::debug!("Received cmd {:#?}", req.cmd);
+                    let mut refresh_preempt = refresh_manual_tx.clone();
+                    let mut rescan_preempt = rescan_manual_tx.clone();
                     let _ = handle.spawn(async move {
                         use command::Command::*;
                         match req.cmd {
                             Refresh => {
-                                let _ = tx.send(()).await;
+                                let _ = refresh_preempt.preempt().await;
+                                let _ = req.reply(command::Reply::Ok).await;
+                            }
+                            Rescan => {
+                                let _ = rescan_preempt.preempt().await;
                                 let _ = req.reply(command::Reply::Ok).await;
                             }
                         }
@@ -120,6 +127,44 @@ enum Opt {
 
     #[structopt(name = "send")]
     Client(client::Subcmd),
+}
+
+#[derive(Clone, Debug)]
+struct Preempter {
+    tx: mpsc::Sender<()>
+}
+
+impl Preempter {
+    async fn preempt(&mut self) -> Result<(), tokio::sync::mpsc::error::SendError> {
+        self.tx.send(()).await
+    }
+}
+
+fn preemptable_interval(timeout: Duration) -> (Preempter, impl Stream<Item = ()>) {
+    let (preempt_tx, preempt_rx) = mpsc::channel(4);
+
+    let (mut inner_tx, inner_rx) = mpsc::channel(4);
+    current_thread::spawn(async move {
+        let mut interval = Interval::new_interval(timeout).fuse();
+        let mut preempt_rx = preempt_rx.fuse();
+        loop {
+            futures::select! {
+                _ = interval.next() => {
+                }
+                preemption = preempt_rx.next() => {
+                    // preempter dropped, time to stop
+                    if let None = preemption {
+                        break;
+                    }
+                    interval = Interval::new_interval(timeout).fuse();
+                }
+            }
+
+            let _ = inner_tx.send(()).await;
+        }
+    });
+
+    (Preempter { tx: preempt_tx}, inner_rx)
 }
 
 fn register_signal(signo: i32) -> Result<Signal, Error> {
