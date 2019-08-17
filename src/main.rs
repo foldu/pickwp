@@ -2,7 +2,7 @@
 #![feature(async_await, proc_macro_hygiene)]
 
 mod client;
-mod command;
+mod ipc;
 
 use std::{io, os::unix::prelude::*, path::PathBuf, process::Command, thread, time::Duration};
 
@@ -21,8 +21,6 @@ use tokio::{
 use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
 use walkdir::{DirEntry, WalkDir};
 
-use command::command_stream;
-
 async fn run(handle: current_thread::Handle) -> Result<(), Error> {
     let opt = Opt::from_args();
     match opt {
@@ -34,7 +32,7 @@ async fn run(handle: current_thread::Handle) -> Result<(), Error> {
 }
 
 async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<(), Error> {
-    let commands = command_stream().context(Ipc)?.fuse();
+    let commands = oneshot_reqrep::listen(ipc::SOCK_PATH).context(Ipc)?.fuse();
     pin_mut!(commands);
 
     let mut wps: Vec<String> = get_wallpapers(handle.clone(), opt.wp_dir.clone())
@@ -82,19 +80,19 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
             }
             req = commands.next() => {
                 if let Some(req) = req {
-                    log::debug!("Received cmd {:#?}", req.cmd);
+                    log::debug!("Received cmd {:#?}", req.kind());
                     let mut refresh_preempt = refresh_preempt.clone();
                     let mut rescan_preempt = rescan_preempt.clone();
                     let _ = handle.spawn(async move {
-                        use command::Command::*;
-                        match req.cmd {
+                        use ipc::Command::*;
+                        match req.kind() {
                             Refresh => {
                                 let _ = refresh_preempt.preempt().await;
-                                let _ = req.reply(command::Reply::Ok).await;
+                                let _ = req.reply(()).await;
                             }
                             Rescan => {
                                 let _ = rescan_preempt.preempt().await;
-                                let _ = req.reply(command::Reply::Ok).await;
+                                let _ = req.reply(()).await;
                             }
                         }
                     });
@@ -126,12 +124,12 @@ enum Opt {
     Daemon(DaemonOpt),
 
     #[structopt(name = "send")]
-    Client(client::Subcmd),
+    Client(ipc::Command),
 }
 
 #[derive(Clone, Debug)]
 struct Preempter {
-    tx: mpsc::Sender<()>
+    tx: mpsc::Sender<()>,
 }
 
 impl Preempter {
@@ -164,7 +162,7 @@ fn preemptible_interval(timeout: Duration) -> (Preempter, impl Stream<Item = ()>
         }
     });
 
-    (Preempter { tx: preempt_tx}, inner_rx)
+    (Preempter { tx: preempt_tx }, inner_rx)
 }
 
 fn register_signal(signo: i32) -> Result<Signal, Error> {
@@ -269,7 +267,7 @@ enum Error {
     Json { source: serde_json::Error },
 
     #[snafu(display("Error while doing ipc: {}", source))]
-    Ipc { source: command::IpcError },
+    Ipc { source: oneshot_reqrep::Error },
 }
 
 fn main() {

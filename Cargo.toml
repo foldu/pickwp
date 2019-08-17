@@ -24,3 +24,4 @@ strum = "0.15.0"
 strum_macros = "0.15.0"
 bincode = "1.1.4"
 bytes = ""
+oneshot-reqrep = { git = "https://github.com/foldu/oneshot-reqrep", rev = "909e8d323d86bb94afc63afd324a5e4f44452016" }
