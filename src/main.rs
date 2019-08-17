@@ -41,11 +41,11 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
         .collect()
         .await;
 
-    let (refresh_manual_tx, refresh) =
-        preemptable_interval(Duration::from_secs(opt.refresh_interval));
+    let (refresh_preempt, refresh) =
+        preemptible_interval(Duration::from_secs(opt.refresh_interval));
     let mut refresh = refresh.fuse();
 
-    let (rescan_manual_tx, rescan) = preemptable_interval(Duration::from_secs(opt.rescan_interval));
+    let (rescan_preempt, rescan) = preemptible_interval(Duration::from_secs(opt.rescan_interval));
     let mut rescan = rescan.fuse();
 
     let int = register_signal(SIGINT)?;
@@ -83,8 +83,8 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
             req = commands.next() => {
                 if let Some(req) = req {
                     log::debug!("Received cmd {:#?}", req.cmd);
-                    let mut refresh_preempt = refresh_manual_tx.clone();
-                    let mut rescan_preempt = rescan_manual_tx.clone();
+                    let mut refresh_preempt = refresh_preempt.clone();
+                    let mut rescan_preempt = rescan_preempt.clone();
                     let _ = handle.spawn(async move {
                         use command::Command::*;
                         match req.cmd {
@@ -140,7 +140,7 @@ impl Preempter {
     }
 }
 
-fn preemptable_interval(timeout: Duration) -> (Preempter, impl Stream<Item = ()>) {
+fn preemptible_interval(timeout: Duration) -> (Preempter, impl Stream<Item = ()>) {
     let (preempt_tx, preempt_rx) = mpsc::channel(4);
 
     let (mut inner_tx, inner_rx) = mpsc::channel(4);
