@@ -18,7 +18,7 @@ use tokio::{
     sync::mpsc::{self, Receiver},
     timer::Interval,
 };
-use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
+use tokio_net::signal::unix::{signal, Signal, SignalKind};
 use walkdir::{DirEntry, WalkDir};
 
 async fn run(handle: current_thread::Handle) -> Result<(), Error> {
@@ -46,8 +46,8 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
     let (rescan_preempt, rescan) = preemptible_interval(Duration::from_secs(opt.rescan_interval));
     let mut rescan = rescan.fuse();
 
-    let int = register_signal(SIGINT)?;
-    let term = register_signal(SIGTERM)?;
+    let int = register_signal(SignalKind::interrupt())?;
+    let term = register_signal(SignalKind::terminate())?;
     let mut terminate = stream::select(int, term).fuse();
 
     let (new_wp_tx, new_wp_rx) = mpsc::channel(1);
@@ -165,8 +165,8 @@ fn preemptible_interval(timeout: Duration) -> (Preempter, impl Stream<Item = ()>
     (Preempter { tx: preempt_tx }, inner_rx)
 }
 
-fn register_signal(signo: i32) -> Result<Signal, Error> {
-    Signal::new(signo).context(RegisterSignal)
+fn register_signal(kind: SignalKind) -> Result<Signal, Error> {
+    signal(kind).context(RegisterSignal)
 }
 
 #[derive(Display, EnumString, Copy, Debug, Clone)]
