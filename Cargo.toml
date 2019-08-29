@@ -17,7 +17,6 @@ structopt = "0.2.18"
 walkdir = "2.2.9"
 serde = { version = "1.0.99", features = ["derive"] }
 rand = "0.7.0"
-derive_more = "0.15.0"
 phf = { version = "0.7", features = ["macros"] }
 serde_json = "1.0.40"
 strum = "0.15.0"

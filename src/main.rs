@@ -6,7 +6,6 @@ mod ipc;
 
 use std::{io, os::unix::prelude::*, path::PathBuf, process::Command, thread, time::Duration};
 
-use derive_more::Display;
 use futures::{pin_mut, prelude::*, stream};
 use rand::prelude::*;
 use serde::Deserialize;
@@ -169,13 +168,21 @@ fn register_signal(kind: SignalKind) -> Result<Signal, Error> {
     signal(kind).context(RegisterSignal)
 }
 
-#[derive(Display, EnumString, Copy, Debug, Clone)]
+#[derive(EnumString, Copy, Debug, Clone)]
 enum Mode {
-    #[display(fmt = "fill")]
     Fill,
 
-    #[display(fmt = "tile")]
     Tile,
+}
+
+impl std::fmt::Display for Mode {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let s = match self {
+            Mode::Fill => "fill",
+            Mode::Tile => "tile",
+        };
+        fmt.write_str(s)
+    }
 }
 
 struct Screen {
