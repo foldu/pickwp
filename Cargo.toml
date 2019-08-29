@@ -12,7 +12,7 @@ tokio-net = { version = "=0.2.0-alpha.3", default-features = false, features = [
 snafu = { version = "0.5.0", default-features = false, features = ["rust_1_30"] }
 futures-preview = { version = "=0.3.0-alpha.18", features = ["async-await", "nightly"] }
 log = "0.4.8"
-env_logger = "0.6.2"
+env_logger = { version = "0.6.2", default-features = false, features = ["termcolor", "atty", "humantime"] }
 structopt = "0.2.18"
 walkdir = "2.2.9"
 serde = { version = "1.0.99", features = ["derive"] }
