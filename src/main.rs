@@ -2,6 +2,7 @@
 #![feature(proc_macro_hygiene)]
 
 mod client;
+mod filter;
 mod ipc;
 
 use std::{io, os::unix::prelude::*, path::PathBuf, process::Command, thread, time::Duration};
@@ -20,6 +21,8 @@ use tokio::{
 };
 use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
 use walkdir::{DirEntry, WalkDir};
+
+use crate::filter::Filter;
 
 async fn run(handle: current_thread::Handle) -> Result<(), Error> {
     let opt = Opt::from_args();
@@ -53,12 +56,14 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
     let (new_wp_tx, new_wp_rx) = mpsc::channel(1);
     let mut new_wp_rx = new_wp_rx.fuse();
 
-    set_wallpapers(&wps, opt.mode)?;
+    let mut filters: Vec<Box<dyn Filter>> = vec![Box::new(filter::LastShown::default())];
+
+    set_wallpapers(&mut filters, &wps, opt.mode)?;
     loop {
         futures::select! {
             _ = refresh.next() => {
                 log::debug!("refresh");
-                set_wallpapers(&wps, opt.mode)?;
+                set_wallpapers(&mut filters, &wps, opt.mode)?;
             }
             _ = rescan.next() => {
                 log::debug!("rescan");
@@ -199,17 +204,32 @@ fn get_outputs() -> Result<impl Iterator<Item = Screen>, Error> {
     Ok(parsed.into_iter().map(|field| Screen { ident: field.name }))
 }
 
-fn set_wallpapers(wps: &[String], mode: Mode) -> Result<(), Error> {
+fn set_wallpapers(
+    filters: &mut [Box<dyn Filter>],
+    wps: &[String],
+    mode: Mode,
+) -> Result<(), Error> {
     let mut rng = rand::thread_rng();
 
+    let filtered = wps
+        .iter()
+        .filter(|wp| filters.iter_mut().any(|filter| filter.is_filtered(wp)))
+        .collect::<Vec<_>>();
+
+    let mut new = Vec::new();
     for screen in get_outputs()? {
-        if let Some(pick) = wps.choose(&mut rng) {
+        if let Some(pick) = filtered.choose(&mut rng) {
+            new.push(pick.as_str());
             let arg = format!(r#"output {} background "{}" {}"#, screen.ident, pick, mode);
             Command::new("swaymsg")
                 .arg(arg)
                 .output()
                 .context(SwaymsgLaunch)?;
         }
+    }
+
+    for filter in filters {
+        filter.after_wp_refresh(&new);
     }
 
     Ok(())
