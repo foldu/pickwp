@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use crate::config;
+
 pub trait Filter {
     fn after_wp_refresh(&mut self, _: &[&str]) {}
     fn is_filtered(&mut self, wp: &str) -> bool;
@@ -20,5 +22,13 @@ impl Filter for LastShown {
 
     fn is_filtered(&mut self, wp: &str) -> bool {
         self.last.contains(wp)
+    }
+}
+
+impl From<config::Filter> for Box<dyn Filter> {
+    fn from(other: config::Filter) -> Self {
+        match other {
+            config::Filter::LastShown => Box::new(LastShown::default()),
+        }
     }
 }

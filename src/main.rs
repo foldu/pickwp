@@ -66,7 +66,12 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
     let (new_wp_tx, new_wp_rx) = mpsc::channel(1);
     let mut new_wp_rx = new_wp_rx.fuse();
 
-    let mut filters: Vec<Box<dyn Filter>> = vec![Box::new(filter::LastShown::default())];
+    let mut filters = config
+        .filters
+        .iter()
+        .cloned()
+        .map(|filter| filter.into())
+        .collect::<Vec<_>>();
 
     set_wallpapers(&mut filters, &wps, opt.mode)?;
     loop {
