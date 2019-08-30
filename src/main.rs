@@ -2,11 +2,13 @@
 #![feature(proc_macro_hygiene)]
 
 mod client;
+mod config;
 mod filter;
 mod ipc;
 
-use std::{io, os::unix::prelude::*, path::PathBuf, process::Command, thread, time::Duration};
+use std::{io, os::unix::prelude::*, process::Command, thread, time::Duration};
 
+use cfgen::prelude::*;
 use futures::{pin_mut, prelude::*, stream};
 use rand::prelude::*;
 use serde::Deserialize;
@@ -37,7 +39,16 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
     let commands = oneshot_reqrep::listen(ipc::SOCK_PATH).context(Ipc)?.fuse();
     pin_mut!(commands);
 
-    let mut wps: Vec<String> = get_wallpapers(handle.clone(), opt.wp_dir.clone())
+    let (_, config) = config::Config::load_or_write_default().context(Config)?;
+
+    let wp_dir = match opt.wp_dir {
+        Some(ref dir) => dir.clone(),
+        None => config.wp_dir.0.to_str().unwrap().to_string(),
+    };
+
+    log::info!("Using {} as wp dir", wp_dir);
+
+    let mut wps: Vec<String> = get_wallpapers(handle.clone(), wp_dir.to_string())
         .collect()
         .await;
 
@@ -66,11 +77,11 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
             }
             _ = rescan.next() => {
                 log::debug!("rescan");
-                let wp_dir = opt.wp_dir.clone();
+                let wp_dir = wp_dir.clone();
                 let handle = handle.clone();
                 let mut new_wp_tx = new_wp_tx.clone();
                 current_thread::spawn(async move {
-                    let wps = get_wallpapers(handle.clone(), wp_dir).collect().await;
+                    let wps = get_wallpapers(handle.clone(), wp_dir.to_string()).collect().await;
                     let _ = new_wp_tx.send(wps).await;
                 });
             }
@@ -110,7 +121,7 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
 #[derive(StructOpt, Debug)]
 struct DaemonOpt {
     #[structopt(long = "wp-dir")]
-    wp_dir: PathBuf,
+    wp_dir: Option<String>,
 
     #[structopt(long = "rescan-interval", default_value = "600")]
     rescan_interval: u64,
@@ -220,7 +231,7 @@ fn set_wallpapers(
 
     let filtered = wps
         .iter()
-        .filter(|wp| filters.iter_mut().any(|filter| filter.is_filtered(wp)))
+        .filter(|wp| filters.iter_mut().any(|filter| !filter.is_filtered(wp)))
         .collect::<Vec<_>>();
 
     let mut new = Vec::new();
@@ -242,7 +253,7 @@ fn set_wallpapers(
     Ok(())
 }
 
-fn get_wallpapers(handle: current_thread::Handle, dir: PathBuf) -> Receiver<String> {
+fn get_wallpapers(handle: current_thread::Handle, dir: String) -> Receiver<String> {
     let (tx, rx) = mpsc::channel(64);
     thread::spawn(move || {
         WalkDir::new(dir).into_iter().for_each(move |entry| {
@@ -285,16 +296,28 @@ fn is_image(ent: &DirEntry) -> bool {
 #[derive(Snafu, Debug)]
 enum Error {
     #[snafu(display("Can't register signal handler: {}", source))]
-    RegisterSignal { source: io::Error },
+    RegisterSignal {
+        source: io::Error,
+    },
 
     #[snafu(display("Can't launch swaymsg: {}", source))]
-    SwaymsgLaunch { source: io::Error },
+    SwaymsgLaunch {
+        source: io::Error,
+    },
 
     #[snafu(display("Can't decode json received from swaymsg: {}", source))]
-    Json { source: serde_json::Error },
+    Json {
+        source: serde_json::Error,
+    },
 
     #[snafu(display("Error while doing ipc: {}", source))]
-    Ipc { source: oneshot_reqrep::Error },
+    Ipc {
+        source: oneshot_reqrep::Error,
+    },
+
+    Config {
+        source: cfgen::Error,
+    },
 }
 
 fn main() {

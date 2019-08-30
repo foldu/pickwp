@@ -21,9 +21,14 @@ phf = { version = "0.7", features = ["macros"] }
 serde_json = "1.0.40"
 strum = "0.15.0"
 strum_macros = "0.15.0"
-bincode = "1.1.4"
 bytes = ""
 
 [dependencies.oneshot-reqrep]
 git = "https://github.com/foldu/oneshot-reqrep"
 rev = "02062d470435e512c3571743e9104f0d62a17035"
+
+[dependencies.cfgen]
+git = "https://github.com/foldu/cfgen"
+rev = "a7373582f2ea6381cbdaffdb4cf1163478e5d17b"
+default-features = false
+features = ["yaml", "expandpath"]

@@ -1,0 +1,4 @@
+---
+wp-dir: "~/Pictures"
+filters:
+  - last-shown
