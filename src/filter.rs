@@ -40,6 +40,7 @@ impl From<config::Filter> for Box<dyn Filter> {
         match other {
             config::Filter::LastShown => Box::new(LastShown::default()),
             config::Filter::FileTime(filter) => Box::new(filter),
+            config::Filter::Filename(filter) => Box::new(filter),
         }
     }
 }
@@ -68,9 +69,26 @@ impl Filter for TimeFilter {
             (Some(from), Some(to)) => (from, to),
             (Some(from), None) => (from, SystemTime::now()),
             (None, Some(to)) => (SystemTime::UNIX_EPOCH, to),
-            _ => return false,
+            _ => return true,
         };
 
         time >= from && time <= to
+    }
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub struct FilenameFilter {
+    contains: String,
+}
+
+impl Filter for FilenameFilter {
+    fn needed_storages(&self) -> StorageFlags {
+        StorageFlags::RELAPATH
+    }
+
+    fn is_ok(&mut self, id: FileKey, storage: &Storage) -> bool {
+        let path = storage.relative_paths.get(id).unwrap();
+        path.contains(&self.contains)
     }
 }

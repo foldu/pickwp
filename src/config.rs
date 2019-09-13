@@ -1,7 +1,7 @@
 use cfgen::{prelude::*, ExpandedPath};
 use serde::Deserialize;
 
-use crate::filter::TimeFilter;
+use crate::filter::{FilenameFilter, TimeFilter};
 
 const DEFAULT: &str = include_str!("../default_config.yml");
 
@@ -19,4 +19,6 @@ pub enum Filter {
     LastShown,
 
     FileTime(TimeFilter),
+
+    Filename(FilenameFilter),
 }
