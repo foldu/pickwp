@@ -41,14 +41,16 @@ impl Storage {
 
     pub fn refresh<I>(&mut self, it: I)
     where
-        I: IntoIterator<Item = (RelativePath, Time)>,
+        I: IntoIterator<Item = (RelativePath, Option<Time>)>,
     {
         self.relative_paths.clear();
         self.times.clear();
 
         for (path, time) in it {
             let key = self.relative_paths.insert(path);
-            self.times.insert(key, time);
+            if let Some(time) = time {
+                self.times.insert(key, time);
+            }
         }
     }
 

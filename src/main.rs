@@ -30,7 +30,7 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::{
     filter::Filter,
-    storage::{RelativePath, Storage},
+    storage::{RelativePath, Storage, StorageFlags},
     util::PathBufExt,
 };
 
@@ -57,8 +57,19 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
 
     log::info!("Using {} as wp dir", wp_dir);
 
+    let mut filters: Vec<Box<dyn Filter>> = config
+        .filters
+        .into_iter()
+        .map(|filter| filter.into())
+        .collect();
+
+    let needed = filters
+        .iter()
+        .map(|filter| filter.needed_storages())
+        .fold(StorageFlags::NONE, |flags, flag| flag | flags);
+
     let mut storage = Storage::new();
-    let wps: Vec<_> = get_wallpapers(handle.clone(), wp_dir.to_string())
+    let wps: Vec<_> = get_wallpapers(handle.clone(), wp_dir.to_string(), needed)
         .collect()
         .await;
     storage.refresh(wps);
@@ -77,12 +88,6 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
     let (new_wp_tx, new_wp_rx) = mpsc::channel(1);
     let mut new_wp_rx = new_wp_rx.fuse();
 
-    let mut filters = config
-        .filters
-        .into_iter()
-        .map(|filter| filter.into())
-        .collect::<Vec<_>>();
-
     set_wallpapers(&wp_dir, &mut filters, &storage, opt.mode)?;
     loop {
         futures::select! {
@@ -96,7 +101,7 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
                 let handle = handle.clone();
                 let mut new_wp_tx = new_wp_tx.clone();
                 current_thread::spawn(async move {
-                    let wps: Vec<_> = get_wallpapers(handle.clone(), wp_dir.to_string()).collect().await;
+                    let wps: Vec<_> = get_wallpapers(handle.clone(), wp_dir.to_string(), needed).collect().await;
                     let _ = new_wp_tx.send(wps).await;
                 });
             }
@@ -276,7 +281,8 @@ fn set_wallpapers(
 fn get_wallpapers(
     handle: current_thread::Handle,
     dir: String,
-) -> Receiver<(RelativePath, storage::Time)> {
+    needed: StorageFlags,
+) -> Receiver<(RelativePath, Option<storage::Time>)> {
     let (tx, rx) = mpsc::channel(64);
     thread::spawn(move || {
         WalkDir::new(&dir).into_iter().for_each(move |entry| {
@@ -284,18 +290,21 @@ fn get_wallpapers(
                 let is_image = is_image(&entry);
                 if is_image {
                     let mut tx = tx.clone();
-                    let meta = entry.metadata();
-                    let relative = {
+                    let time = if needed.contains(StorageFlags::FILETIME) {
                         entry
-                            .path()
-                            .strip_prefix(&dir)
-                            .ok()
-                            .and_then(|path| RelativePath::try_from(path.to_owned()).ok())
+                            .metadata()
+                            .map(|meta| Some(storage::Time::from_meta(&meta)))
+                    } else {
+                        Ok(None)
+                    };
+                    let relative = {
+                        let unprefixed = entry.path().strip_prefix(&dir).unwrap();
+                        RelativePath::try_from(unprefixed.to_owned())
                     };
 
-                    if let (Some(relative), Ok(meta)) = (relative, meta) {
+                    if let (Ok(relative), Ok(time)) = (relative, time) {
                         let _ = handle.spawn(async move {
-                            let _ = tx.send((relative, storage::Time::from_meta(&meta))).await;
+                            let _ = tx.send((relative, time)).await;
                         });
                     }
                 }
