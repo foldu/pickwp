@@ -11,8 +11,11 @@ pub enum Command {
 
     #[structopt(name = "rescan")]
     Rescan,
+
+    #[structopt(name = "reload-config")]
+    ReloadConfig,
 }
 
 impl Req for Command {
-    type Rep = ();
+    type Rep = Result<(), String>;
 }

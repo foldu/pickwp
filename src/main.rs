@@ -19,7 +19,6 @@ use rand::prelude::*;
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
 use structopt::StructOpt;
-use strum_macros::EnumString;
 use tokio::{
     runtime::current_thread,
     sync::mpsc::{self, Receiver},
@@ -28,6 +27,7 @@ use tokio_net::signal::unix::{signal, Signal, SignalKind};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::{
+    config::Mode,
     filter::Filter,
     storage::{RelativePath, Storage, StorageFlags},
     util::{preemptible_interval, PathBufExt},
@@ -36,48 +36,33 @@ use crate::{
 async fn run(handle: current_thread::Handle) -> Result<(), Error> {
     let opt = Opt::from_args();
     match opt {
-        Opt::Daemon(opt) => run_server(handle, opt).await?,
+        Opt::Daemon => run_server(handle).await?,
         Opt::Client(cmd) => client::run(cmd).await.context(Ipc)?,
     }
 
     Ok(())
 }
 
-async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<(), Error> {
+async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
     let commands = oneshot_reqrep::listen(ipc::SOCK_PATH).context(Ipc)?.fuse();
     pin_mut!(commands);
 
     let (_, config) = config::Config::load_or_write_default().context(Config)?;
 
-    let wp_dir = match opt.wp_dir {
-        Some(ref dir) => dir.clone(),
-        None => config.wp_dir.0.to_str().unwrap().to_string(),
-    };
-
-    log::info!("Using {} as wp dir", wp_dir);
-
-    let mut filters: Vec<Box<dyn Filter>> = config
-        .filters
-        .into_iter()
-        .map(|filter| filter.into())
-        .collect();
-
-    let needed = filters
-        .iter()
-        .map(|filter| filter.needed_storages())
-        .fold(StorageFlags::NONE, |flags, flag| flag | flags);
+    let mut state = State::from_config(config);
 
     let mut storage = Storage::new();
-    let wps: Vec<_> = get_wallpapers(handle.clone(), wp_dir.to_string(), needed)
+    let wps: Vec<_> = get_wallpapers(handle.clone(), state.wp_dir.to_string(), state.needed)
         .collect()
         .await;
     storage.refresh(wps);
 
-    let (refresh_preempt, refresh) =
-        preemptible_interval(Duration::from_secs(opt.refresh_interval));
+    let (mut refresh_preempt, refresh) =
+        preemptible_interval(Duration::from_secs(state.refresh_interval));
     let mut refresh = refresh.fuse();
 
-    let (rescan_preempt, rescan) = preemptible_interval(Duration::from_secs(opt.rescan_interval));
+    let (mut rescan_preempt, rescan) =
+        preemptible_interval(Duration::from_secs(state.rescan_interval));
     let mut rescan = rescan.fuse();
 
     let int = register_signal(SignalKind::interrupt())?;
@@ -87,20 +72,21 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
     let (new_wp_tx, new_wp_rx) = mpsc::channel(1);
     let mut new_wp_rx = new_wp_rx.fuse();
 
-    set_wallpapers(&wp_dir, &mut filters, &storage, opt.mode)?;
+    set_wallpapers(&mut state, &storage)?;
     loop {
         futures::select! {
             _ = refresh.next() => {
                 log::debug!("refresh");
-                set_wallpapers(&wp_dir, &mut filters, &storage, opt.mode)?;
+                set_wallpapers(&mut state, &storage)?;
             }
             _ = rescan.next() => {
                 log::debug!("rescan");
-                let wp_dir = wp_dir.clone();
+                let wp_dir = state.wp_dir.clone();
                 let handle = handle.clone();
+                let needed = state.needed;
                 let mut new_wp_tx = new_wp_tx.clone();
                 current_thread::spawn(async move {
-                    let wps: Vec<_> = get_wallpapers(handle.clone(), wp_dir.to_string(), needed).collect().await;
+                    let wps: Vec<_> = get_wallpapers(handle, wp_dir, needed).collect().await;
                     let _ = new_wp_tx.send(wps).await;
                 });
             }
@@ -115,47 +101,73 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
             req = commands.next() => {
                 if let Some(req) = req {
                     log::debug!("Received cmd {:#?}", req.kind());
-                    let mut refresh_preempt = refresh_preempt.clone();
-                    let mut rescan_preempt = rescan_preempt.clone();
-                    let _ = handle.spawn(async move {
-                        use ipc::Command::*;
-                        match req.kind() {
-                            Refresh => {
-                                let _ = refresh_preempt.preempt().await;
-                                let _ = req.reply(()).await;
-                            }
-                            Rescan => {
-                                let _ = rescan_preempt.preempt().await;
-                                let _ = req.reply(()).await;
+                    use ipc::Command::*;
+                    match req.kind() {
+                        Refresh => {
+                            let _ = refresh_preempt.preempt().await;
+                            let _ = req.reply(Ok(())).await;
+                        }
+                        Rescan => {
+                            let _ = rescan_preempt.preempt().await;
+                            let _ = req.reply(Ok(())).await;
+                        }
+                        ReloadConfig => {
+                            log::error!("config reload not implemented");
+                            match config::Config::load() {
+                                Ok(config) => {
+                                    // FIXME: not all things are properly reset like
+                                    // {rescan,refresh}_interval
+                                    state = State::from_config(config);
+                                    let _ = req.reply(Ok(())).await;
+                                }
+                                Err(e) => {
+                                    let _ = req.reply(Err(e.to_string())).await;
+                                }
                             }
                         }
-                    });
-
+                    };
                 }
             }
         }
     }
 }
 
-#[derive(StructOpt, Debug)]
-struct DaemonOpt {
-    #[structopt(long = "wp-dir")]
-    wp_dir: Option<String>,
-
-    #[structopt(long = "rescan-interval", default_value = "600")]
-    rescan_interval: u64,
-
-    #[structopt(long = "refresh-interval", default_value = "300")]
-    refresh_interval: u64,
-
-    #[structopt(long = "mode", default_value = "Fill")]
+struct State {
+    needed: StorageFlags,
+    filters: Vec<Box<dyn Filter>>,
+    wp_dir: String,
     mode: Mode,
+    rescan_interval: u64,
+    refresh_interval: u64,
+}
+
+impl State {
+    fn from_config(config: config::Config) -> Self {
+        let filters: Vec<Box<dyn Filter>> = config
+            .filters
+            .into_iter()
+            .map(|filter| filter.into())
+            .collect();
+        let needed = filters
+            .iter()
+            .map(|filter| filter.needed_storages())
+            .fold(StorageFlags::NONE, |flags, flag| flag | flags);
+
+        Self {
+            filters,
+            needed,
+            wp_dir: config.wp_dir.0.into_string().unwrap(),
+            mode: config.mode,
+            refresh_interval: config.refresh_interval,
+            rescan_interval: config.refresh_interval,
+        }
+    }
 }
 
 #[derive(StructOpt, Debug)]
 enum Opt {
     #[structopt(name = "daemon")]
-    Daemon(DaemonOpt),
+    Daemon,
 
     #[structopt(name = "send")]
     Client(ipc::Command),
@@ -163,23 +175,6 @@ enum Opt {
 
 fn register_signal(kind: SignalKind) -> Result<Signal, Error> {
     signal(kind).context(RegisterSignal)
-}
-
-#[derive(EnumString, Copy, Debug, Clone)]
-enum Mode {
-    Fill,
-
-    Tile,
-}
-
-impl std::fmt::Display for Mode {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let s = match self {
-            Mode::Fill => "fill",
-            Mode::Tile => "tile",
-        };
-        fmt.write_str(s)
-    }
 }
 
 struct Screen {
@@ -203,28 +198,31 @@ fn get_outputs() -> Result<impl Iterator<Item = Screen>, Error> {
     Ok(parsed.into_iter().map(|field| Screen { ident: field.name }))
 }
 
-fn set_wallpapers(
-    wp_dir: &str,
-    filters: &mut [Box<dyn Filter>],
-    storage: &Storage,
-    mode: Mode,
-) -> Result<(), Error> {
+fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
     let mut rng = rand::thread_rng();
 
     let filtered = storage
         .keys()
-        .filter(|key| filters.iter_mut().all(|filter| filter.is_ok(*key, storage)))
+        .filter(|key| {
+            state
+                .filters
+                .iter_mut()
+                .all(|filter| filter.is_ok(*key, storage))
+        })
         .collect::<Vec<_>>();
 
     let mut new = Vec::new();
     for screen in get_outputs()? {
         if let Some(pick) = filtered.choose(&mut rng) {
             new.push(*pick);
-            let path = Path::new(wp_dir)
+            let path = Path::new(&state.wp_dir)
                 .join(storage.relative_paths.get(*pick).unwrap().as_str())
                 .into_string()
                 .unwrap();
-            let arg = format!(r#"output {} background "{}" {}"#, screen.ident, path, mode);
+            let arg = format!(
+                r#"output {} background "{}" {}"#,
+                screen.ident, path, state.mode
+            );
             Command::new("swaymsg")
                 .arg(arg)
                 .output()
@@ -232,7 +230,7 @@ fn set_wallpapers(
         }
     }
 
-    for filter in filters {
+    for filter in &mut state.filters {
         filter.after_wp_refresh(&new);
     }
 

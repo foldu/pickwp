@@ -1,5 +1,8 @@
 ---
 wp-dir: "~/Pictures"
+mode: fill
+rescan-interval: 600
+refresh-interval: 300
 filters:
   - type: last-shown
   - type: file-time
