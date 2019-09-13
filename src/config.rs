@@ -15,6 +15,7 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[serde(tag = "type")]
 pub enum Filter {
     LastShown,
 
