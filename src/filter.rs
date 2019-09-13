@@ -65,14 +65,12 @@ impl Filter for TimeFilter {
     fn is_ok(&mut self, id: FileKey, storage: &Storage) -> bool {
         let time = storage.times.get(id).unwrap().select(self.time_kind);
 
-        let (from, to) = match (self.from, self.to) {
-            (Some(from), Some(to)) => (from, to),
-            (Some(from), None) => (from, SystemTime::now()),
-            (None, Some(to)) => (SystemTime::UNIX_EPOCH, to),
-            _ => return true,
-        };
-
-        time >= from && time <= to
+        match (self.from, self.to) {
+            (Some(from), Some(to)) => time >= from && time <= to,
+            (Some(from), None) => time >= from,
+            (None, Some(to)) => time <= to,
+            _ => true,
+        }
     }
 }
 
