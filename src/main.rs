@@ -5,8 +5,13 @@ mod client;
 mod config;
 mod filter;
 mod ipc;
+mod storage;
+mod util;
 
-use std::{io, os::unix::prelude::*, process::Command, thread, time::Duration};
+use std::{
+    convert::TryFrom, io, os::unix::prelude::*, path::Path, process::Command, thread,
+    time::Duration,
+};
 
 use cfgen::prelude::*;
 use futures::{pin_mut, prelude::*, stream};
@@ -23,7 +28,11 @@ use tokio::{
 use tokio_net::signal::unix::{signal, Signal, SignalKind};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::filter::Filter;
+use crate::{
+    filter::Filter,
+    storage::{RelativePath, Storage},
+    util::PathBufExt,
+};
 
 async fn run(handle: current_thread::Handle) -> Result<(), Error> {
     let opt = Opt::from_args();
@@ -48,9 +57,11 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
 
     log::info!("Using {} as wp dir", wp_dir);
 
-    let mut wps: Vec<String> = get_wallpapers(handle.clone(), wp_dir.to_string())
+    let mut storage = Storage::new();
+    let wps: Vec<_> = get_wallpapers(handle.clone(), wp_dir.to_string())
         .collect()
         .await;
+    storage.refresh(wps);
 
     let (refresh_preempt, refresh) =
         preemptible_interval(Duration::from_secs(opt.refresh_interval));
@@ -68,17 +79,16 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
 
     let mut filters = config
         .filters
-        .iter()
-        .cloned()
+        .into_iter()
         .map(|filter| filter.into())
         .collect::<Vec<_>>();
 
-    set_wallpapers(&mut filters, &wps, opt.mode)?;
+    set_wallpapers(&wp_dir, &mut filters, &storage, opt.mode)?;
     loop {
         futures::select! {
             _ = refresh.next() => {
                 log::debug!("refresh");
-                set_wallpapers(&mut filters, &wps, opt.mode)?;
+                set_wallpapers(&wp_dir, &mut filters, &storage, opt.mode)?;
             }
             _ = rescan.next() => {
                 log::debug!("rescan");
@@ -86,13 +96,13 @@ async fn run_server(handle: current_thread::Handle, opt: DaemonOpt) -> Result<()
                 let handle = handle.clone();
                 let mut new_wp_tx = new_wp_tx.clone();
                 current_thread::spawn(async move {
-                    let wps = get_wallpapers(handle.clone(), wp_dir.to_string()).collect().await;
+                    let wps: Vec<_> = get_wallpapers(handle.clone(), wp_dir.to_string()).collect().await;
                     let _ = new_wp_tx.send(wps).await;
                 });
             }
             new_wps = new_wp_rx.next() => {
                 if let Some(new_wps) = new_wps {
-                    wps = new_wps;
+                    storage.refresh(new_wps);
                 }
             }
             _ = terminate.next() => {
@@ -228,22 +238,27 @@ fn get_outputs() -> Result<impl Iterator<Item = Screen>, Error> {
 }
 
 fn set_wallpapers(
+    wp_dir: &str,
     filters: &mut [Box<dyn Filter>],
-    wps: &[String],
+    storage: &Storage,
     mode: Mode,
 ) -> Result<(), Error> {
     let mut rng = rand::thread_rng();
 
-    let filtered = wps
-        .iter()
-        .filter(|wp| filters.iter_mut().any(|filter| !filter.is_filtered(wp)))
+    let filtered = storage
+        .keys()
+        .filter(|key| filters.iter_mut().all(|filter| filter.is_ok(*key, storage)))
         .collect::<Vec<_>>();
 
     let mut new = Vec::new();
     for screen in get_outputs()? {
         if let Some(pick) = filtered.choose(&mut rng) {
-            new.push(pick.as_str());
-            let arg = format!(r#"output {} background "{}" {}"#, screen.ident, pick, mode);
+            new.push(*pick);
+            let path = Path::new(wp_dir)
+                .join(storage.relative_paths.get(*pick).unwrap().as_str())
+                .into_string()
+                .unwrap();
+            let arg = format!(r#"output {} background "{}" {}"#, screen.ident, path, mode);
             Command::new("swaymsg")
                 .arg(arg)
                 .output()
@@ -258,22 +273,31 @@ fn set_wallpapers(
     Ok(())
 }
 
-fn get_wallpapers(handle: current_thread::Handle, dir: String) -> Receiver<String> {
+fn get_wallpapers(
+    handle: current_thread::Handle,
+    dir: String,
+) -> Receiver<(RelativePath, storage::Time)> {
     let (tx, rx) = mpsc::channel(64);
     thread::spawn(move || {
-        WalkDir::new(dir).into_iter().for_each(move |entry| {
+        WalkDir::new(&dir).into_iter().for_each(move |entry| {
             if let Ok(entry) = entry {
                 let is_image = is_image(&entry);
-                let s = entry.into_path().into_os_string().into_string();
+                if is_image {
+                    let mut tx = tx.clone();
+                    let meta = entry.metadata();
+                    let relative = {
+                        entry
+                            .path()
+                            .strip_prefix(&dir)
+                            .ok()
+                            .and_then(|path| RelativePath::try_from(path.to_owned()).ok())
+                    };
 
-                match (s, is_image) {
-                    (Ok(s), true) => {
-                        let mut tx = tx.clone();
+                    if let (Some(relative), Ok(meta)) = (relative, meta) {
                         let _ = handle.spawn(async move {
-                            let _ = tx.send(s).await;
+                            let _ = tx.send((relative, storage::Time::from_meta(&meta))).await;
                         });
                     }
-                    _ => {}
                 }
             }
         });

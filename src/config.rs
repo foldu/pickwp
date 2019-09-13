@@ -1,6 +1,8 @@
 use cfgen::{prelude::*, ExpandedPath};
 use serde::Deserialize;
 
+use crate::filter::TimeFilter;
+
 const DEFAULT: &str = include_str!("../default_config.yml");
 
 #[derive(Cfgen, Debug, Deserialize)]
@@ -11,8 +13,10 @@ pub struct Config {
     pub filters: Vec<Filter>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Filter {
     LastShown,
+
+    FileTime(TimeFilter),
 }

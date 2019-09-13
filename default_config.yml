@@ -2,3 +2,8 @@
 wp-dir: "~/Pictures"
 filters:
   - last-shown
+  # TODO: comments
+  - file-time:
+      time-kind: mtime
+      from: 2019-08-20 00:00:00
+      to: 2019-09-13 00:00:00
