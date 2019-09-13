@@ -23,7 +23,6 @@ use strum_macros::EnumString;
 use tokio::{
     runtime::current_thread,
     sync::mpsc::{self, Receiver},
-    timer::Interval,
 };
 use tokio_net::signal::unix::{signal, Signal, SignalKind};
 use walkdir::{DirEntry, WalkDir};
@@ -31,7 +30,7 @@ use walkdir::{DirEntry, WalkDir};
 use crate::{
     filter::Filter,
     storage::{RelativePath, Storage, StorageFlags},
-    util::PathBufExt,
+    util::{preemptible_interval, PathBufExt},
 };
 
 async fn run(handle: current_thread::Handle) -> Result<(), Error> {
@@ -160,44 +159,6 @@ enum Opt {
 
     #[structopt(name = "send")]
     Client(ipc::Command),
-}
-
-#[derive(Clone, Debug)]
-struct Preempter {
-    tx: mpsc::Sender<()>,
-}
-
-impl Preempter {
-    async fn preempt(&mut self) -> Result<(), tokio::sync::mpsc::error::SendError> {
-        self.tx.send(()).await
-    }
-}
-
-fn preemptible_interval(timeout: Duration) -> (Preempter, impl Stream<Item = ()>) {
-    let (preempt_tx, preempt_rx) = mpsc::channel(4);
-
-    let (mut inner_tx, inner_rx) = mpsc::channel(4);
-    current_thread::spawn(async move {
-        let mut interval = Interval::new_interval(timeout).fuse();
-        let mut preempt_rx = preempt_rx.fuse();
-        loop {
-            futures::select! {
-                _ = interval.next() => {
-                }
-                preemption = preempt_rx.next() => {
-                    // preempter dropped, time to stop
-                    if let None = preemption {
-                        break;
-                    }
-                    interval = Interval::new_interval(timeout).fuse();
-                }
-            }
-
-            let _ = inner_tx.send(()).await;
-        }
-    });
-
-    (Preempter { tx: preempt_tx }, inner_rx)
 }
 
 fn register_signal(kind: SignalKind) -> Result<Signal, Error> {
