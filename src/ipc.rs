@@ -10,7 +10,7 @@ use crate::config;
 
 pub const SOCK_PATH: &str = "\0pickwp";
 
-#[derive(StructOpt, Debug, Serialize, Deserialize, Copy, Clone)]
+#[derive(StructOpt, Debug, Serialize, Deserialize)]
 pub enum Command {
     /// Select some new wallpapers
     Refresh,
@@ -31,9 +31,16 @@ pub enum Command {
     },
 }
 
-#[derive(StructOpt, Debug, Serialize, Deserialize, Copy, Clone)]
+#[derive(StructOpt, Debug, Serialize, Deserialize)]
 pub enum FilterCommand {
-    Rm { id: usize },
+    Rm {
+        id: usize,
+    },
+
+    Add {
+        #[structopt(required = true)]
+        filters: Vec<config::Filter>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]

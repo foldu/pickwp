@@ -20,7 +20,7 @@ pub struct Config {
     pub filters: Vec<Filter>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "type")]
 pub enum Filter {
@@ -29,6 +29,14 @@ pub enum Filter {
     FileTime(TimeFilter),
 
     Filename(FilenameFilter),
+}
+
+impl std::str::FromStr for Filter {
+    type Err = serde_yaml::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_yaml::from_str(s)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]

@@ -148,6 +148,10 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                                         Err(format!("No filter with id {}", id))
                                     }
                                 }
+                                Some(FilterCommand::Add { filters }) => {
+                                    state.filters.extend(filters.into_iter().map(|filter| filter.clone().into()));
+                                    Ok(Reply::Unit)
+                                }
                             }
                         }
                     };
