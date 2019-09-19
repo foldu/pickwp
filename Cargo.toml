@@ -28,7 +28,7 @@ bitflags = "1.1.0"
 
 [dependencies.oneshot-reqrep]
 git = "https://github.com/foldu/oneshot-reqrep"
-rev = "02062d470435e512c3571743e9104f0d62a17035"
+rev = "bd4f1dce63432ee6f6e525b92a1b2c16a3a653a0"
 
 [dependencies.cfgen]
 git = "https://github.com/foldu/cfgen"

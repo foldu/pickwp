@@ -9,7 +9,13 @@ mod storage;
 mod util;
 
 use std::{
-    convert::TryFrom, io, os::unix::prelude::*, path::Path, process::Command, thread,
+    collections::HashMap,
+    convert::TryFrom,
+    io,
+    os::unix::prelude::*,
+    path::Path,
+    process::Command,
+    thread,
     time::Duration,
 };
 
@@ -29,6 +35,7 @@ use walkdir::{DirEntry, WalkDir};
 use crate::{
     config::Mode,
     filter::Filter,
+    ipc::Reply,
     storage::{RelativePath, Storage, StorageFlags},
     util::{preemptible_interval, PathBufExt},
 };
@@ -44,6 +51,7 @@ async fn run(handle: current_thread::Handle) -> Result<(), Error> {
 }
 
 async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
+    std::env::set_var("RUST_LOG", "pickwp=info");
     let commands = oneshot_reqrep::listen(ipc::SOCK_PATH).context(Ipc)?.fuse();
     pin_mut!(commands);
 
@@ -105,11 +113,11 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                     match req.kind() {
                         Refresh => {
                             let _ = refresh_preempt.preempt().await;
-                            let _ = req.reply(Ok(())).await;
+                            let _ = req.reply(&Ok(Reply::Unit)).await;
                         }
                         Rescan => {
                             let _ = rescan_preempt.preempt().await;
-                            let _ = req.reply(Ok(())).await;
+                            let _ = req.reply(&Ok(Reply::Unit)).await;
                         }
                         ReloadConfig => {
                             log::error!("config reload not implemented");
@@ -118,12 +126,15 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                                     // FIXME: not all things are properly reset like
                                     // {rescan,refresh}_interval
                                     state = State::from_config(config);
-                                    let _ = req.reply(Ok(())).await;
+                                    let _ = req.reply(&Ok(Reply::Unit)).await;
                                 }
                                 Err(e) => {
-                                    let _ = req.reply(Err(e.to_string())).await;
+                                    let _ = req.reply(&Err(e.to_string())).await;
                                 }
                             }
+                        }
+                        Current => {
+                            let _ = req.reply(&Ok(Reply::Wps(state.current.clone()))).await;
                         }
                     };
                 }
@@ -139,6 +150,7 @@ struct State {
     mode: Mode,
     rescan_interval: u64,
     refresh_interval: u64,
+    current: HashMap<String, Option<String>>,
 }
 
 impl State {
@@ -155,6 +167,7 @@ impl State {
 
         Self {
             filters,
+            current: Default::default(),
             needed,
             wp_dir: config.wp_dir.0.into_string().unwrap(),
             mode: config.mode,
@@ -212,8 +225,9 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
         .collect::<Vec<_>>();
 
     let mut new = Vec::new();
+    state.current.clear();
     for screen in get_outputs()? {
-        if let Some(pick) = filtered.choose(&mut rng) {
+        let path = if let Some(pick) = filtered.choose(&mut rng) {
             new.push(*pick);
             let path = Path::new(&state.wp_dir)
                 .join(storage.relative_paths.get(*pick).unwrap().as_str())
@@ -223,11 +237,17 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
                 r#"output {} background "{}" {}"#,
                 screen.ident, path, state.mode
             );
+
             Command::new("swaymsg")
                 .arg(arg)
                 .output()
                 .context(SwaymsgLaunch)?;
-        }
+            Some(path)
+        } else {
+            None
+        };
+
+        state.current.insert(screen.ident, path);
     }
 
     for filter in &mut state.filters {
