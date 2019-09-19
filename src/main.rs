@@ -5,6 +5,7 @@ mod client;
 mod config;
 mod filter;
 mod ipc;
+mod macros;
 mod monitor;
 mod storage;
 mod util;
@@ -93,7 +94,7 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                 let mut new_wp_tx = new_wp_tx.clone();
                 current_thread::spawn(async move {
                     let wps: Vec<_> = get_wallpapers(handle, wp_dir, needed).collect().await;
-                    let _ = new_wp_tx.send(wps).await;
+                    new_wp_tx.send(wps).await.unwrap();
                 });
             }
             new_wps = new_wp_rx.next() => {
@@ -110,12 +111,12 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                     use ipc::Command::*;
                     match req.kind() {
                         Refresh => {
-                            let _ = refresh_preempt.preempt().await;
-                            let _ = req.reply(&Ok(Reply::Unit)).await;
+                            refresh_preempt.preempt().await.unwrap();
+                            try_or_err!(req.reply(&Ok(Reply::Unit)).await);
                         }
                         Rescan => {
-                            let _ = rescan_preempt.preempt().await;
-                            let _ = req.reply(&Ok(Reply::Unit)).await;
+                            rescan_preempt.preempt().await.unwrap();
+                            try_or_err!(req.reply(&Ok(Reply::Unit)).await);
                         }
                         ReloadConfig => {
                             match config::Config::load() {
@@ -123,20 +124,20 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                                     // FIXME: not all things are properly reset like
                                     // {rescan,refresh}_interval
                                     state = State::from_config(config);
-                                    let _ = req.reply(&Ok(Reply::Unit)).await;
+                                    try_or_err!(req.reply(&Ok(Reply::Unit)).await);
                                     log::info!("Reloaded config");
                                 }
                                 Err(e) => {
-                                    let _ = req.reply(&Err(e.to_string())).await;
+                                    try_or_err!(req.reply(&Err(e.to_string())).await);
                                 }
                             }
                         }
                         Current => {
-                            let _ = req.reply(&Ok(Reply::Wps(state.current.clone()))).await;
+                            try_or_err!(req.reply(&Ok(Reply::Wps(state.current.clone()))).await);
                         }
                         Filters => {
                             let filters = state.filters.iter().map(|filter| filter.serializeable()).collect();
-                            let _ = req.reply(&Ok(Reply::Filters(filters))).await;
+                            try_or_err!(req.reply(&Ok(Reply::Filters(filters))).await);
                         }
                     };
                 }
@@ -264,6 +265,7 @@ fn get_wallpapers(
 
                     if let (Ok(relative), Ok(time)) = (relative, time) {
                         let _ = handle.spawn(async move {
+                            // FIXME: stop when rx hangs up
                             let _ = tx.send((relative, time)).await;
                         });
                     }
