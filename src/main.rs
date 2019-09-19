@@ -50,7 +50,6 @@ async fn run(handle: current_thread::Handle) -> Result<(), Error> {
 }
 
 async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
-    std::env::set_var("RUST_LOG", "pickwp=info");
     let commands = oneshot_reqrep::listen(ipc::SOCK_PATH).context(Ipc)?.fuse();
     pin_mut!(commands);
 
@@ -83,11 +82,11 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
     loop {
         futures::select! {
             _ = refresh.next() => {
-                log::debug!("refresh");
+                log::info!("Refreshing");
                 set_wallpapers(&mut state, &storage)?;
             }
             _ = rescan.next() => {
-                log::debug!("rescan");
+                log::info!("Starting rescan");
                 let wp_dir = state.wp_dir.clone();
                 let handle = handle.clone();
                 let needed = state.needed;
@@ -125,6 +124,7 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                                     // {rescan,refresh}_interval
                                     state = State::from_config(config);
                                     let _ = req.reply(&Ok(Reply::Unit)).await;
+                                    log::info!("Reloaded config");
                                 }
                                 Err(e) => {
                                     let _ = req.reply(&Err(e.to_string())).await;
@@ -318,6 +318,7 @@ enum Error {
 }
 
 fn main() {
+    std::env::set_var("RUST_LOG", "pickwp=info");
     env_logger::init();
     let mut rt = current_thread::Runtime::new().unwrap();
     let handle = rt.handle();
