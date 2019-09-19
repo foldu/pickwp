@@ -44,7 +44,7 @@ async fn run(handle: current_thread::Handle) -> Result<(), Error> {
     let opt = Opt::from_args();
     match opt.cmd {
         None => run_server(handle).await?,
-        Some(cmd) => client::run(cmd).await.context(Ipc)?,
+        Some(cmd) => client::run(cmd, opt.cmd_config).await.context(Ipc)?,
     }
 
     Ok(())
@@ -186,6 +186,15 @@ impl State {
 struct Opt {
     #[structopt(subcommand)]
     cmd: Option<ipc::Command>,
+    #[structopt(flatten)]
+    cmd_config: CmdConfig,
+}
+
+#[derive(StructOpt, Debug)]
+pub struct CmdConfig {
+    /// Format output in json
+    #[structopt(short, long)]
+    json: bool,
 }
 
 fn register_signal(kind: SignalKind) -> Result<Signal, Error> {

@@ -12,14 +12,19 @@ pub const SOCK_PATH: &str = "\0pickwp";
 
 #[derive(StructOpt, Debug, Serialize, Deserialize, Copy, Clone)]
 pub enum Command {
+    /// Select some new wallpapers
     Refresh,
 
+    /// Rescan wallpaper directory
     Rescan,
 
+    /// Reload config file
     ReloadConfig,
 
+    /// Print currently selected wallpapers
     Current,
 
+    /// Print active filters
     Filters,
 }
 
