@@ -119,7 +119,6 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                             let _ = req.reply(&Ok(Reply::Unit)).await;
                         }
                         ReloadConfig => {
-                            log::error!("config reload not implemented");
                             match config::Config::load() {
                                 Ok(config) => {
                                     // FIXME: not all things are properly reset like
@@ -134,6 +133,10 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                         }
                         Current => {
                             let _ = req.reply(&Ok(Reply::Wps(state.current.clone()))).await;
+                        }
+                        Filters => {
+                            let filters = state.filters.iter().map(|filter| filter.serializeable()).collect();
+                            let _ = req.reply(&Ok(Reply::Filters(filters))).await;
                         }
                     };
                 }

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, time::SystemTime};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config,
@@ -15,6 +15,8 @@ pub trait Filter {
     fn needed_storages(&self) -> StorageFlags {
         StorageFlags::NONE
     }
+
+    fn serializeable(&self) -> config::Filter;
 }
 
 #[derive(Default)]
@@ -33,6 +35,10 @@ impl Filter for LastShown {
     fn is_ok(&mut self, id: FileKey, _storage: &Storage) -> bool {
         !self.last.contains(&id)
     }
+
+    fn serializeable(&self) -> config::Filter {
+        config::Filter::LastShown
+    }
 }
 
 impl From<config::Filter> for Box<dyn Filter> {
@@ -45,7 +51,7 @@ impl From<config::Filter> for Box<dyn Filter> {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct TimeFilter {
     time_kind: TimeKind,
@@ -72,9 +78,13 @@ impl Filter for TimeFilter {
             _ => true,
         }
     }
+
+    fn serializeable(&self) -> config::Filter {
+        config::Filter::FileTime(self.clone())
+    }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct FilenameFilter {
     contains: String,
@@ -88,5 +98,9 @@ impl Filter for FilenameFilter {
     fn is_ok(&mut self, id: FileKey, storage: &Storage) -> bool {
         let path = storage.relative_paths.get(id).unwrap();
         path.contains(&self.contains)
+    }
+
+    fn serializeable(&self) -> config::Filter {
+        config::Filter::Filename(self.clone())
     }
 }

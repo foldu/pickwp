@@ -7,7 +7,7 @@ use std::{
 };
 
 use bitflags::bitflags;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use snafu::Snafu;
 
@@ -121,7 +121,7 @@ impl std::ops::Deref for RelativePath {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TimeKind {
     Mtime,

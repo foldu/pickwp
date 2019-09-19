@@ -10,6 +10,12 @@ pub async fn run(cmd: Command) -> Result<(), oneshot_reqrep::Error> {
                 serde_json::to_string_pretty(&wps).expect("Can't deserialize to json")
             );
         }
+        Ok(Reply::Filters(filters)) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&filters).expect("Can't deserialize to json")
+            );
+        }
         Ok(Reply::Unit) => {}
         Err(e) => {
             eprintln!("{}", e);
