@@ -5,6 +5,7 @@ mod client;
 mod config;
 mod filter;
 mod ipc;
+mod monitor;
 mod storage;
 mod util;
 
@@ -14,7 +15,6 @@ use std::{
     io,
     os::unix::prelude::*,
     path::Path,
-    process::Command,
     thread,
     time::Duration,
 };
@@ -22,7 +22,6 @@ use std::{
 use cfgen::prelude::*;
 use futures::{pin_mut, prelude::*, stream};
 use rand::prelude::*;
-use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
 use structopt::StructOpt;
 use tokio::{
@@ -33,9 +32,9 @@ use tokio_net::signal::unix::{signal, Signal, SignalKind};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::{
-    config::Mode,
     filter::Filter,
     ipc::Reply,
+    monitor::{Mode, Monitor},
     storage::{RelativePath, Storage, StorageFlags},
     util::{preemptible_interval, PathBufExt},
 };
@@ -151,6 +150,7 @@ struct State {
     rescan_interval: u64,
     refresh_interval: u64,
     current: HashMap<String, Option<String>>,
+    monitor: Box<dyn Monitor>,
 }
 
 impl State {
@@ -173,6 +173,7 @@ impl State {
             mode: config.mode,
             refresh_interval: config.refresh_interval,
             rescan_interval: config.refresh_interval,
+            monitor: config.backend.into(),
         }
     }
 }
@@ -190,27 +191,6 @@ fn register_signal(kind: SignalKind) -> Result<Signal, Error> {
     signal(kind).context(RegisterSignal)
 }
 
-struct Screen {
-    ident: String,
-}
-
-#[derive(Deserialize)]
-struct GetOutputField {
-    name: String,
-}
-
-fn get_outputs() -> Result<impl Iterator<Item = Screen>, Error> {
-    let output = Command::new("swaymsg")
-        .arg("-rt")
-        .arg("get_outputs")
-        .output()
-        .context(SwaymsgLaunch)?;
-
-    let parsed: Vec<GetOutputField> = serde_json::from_slice(&output.stdout).context(Json)?;
-
-    Ok(parsed.into_iter().map(|field| Screen { ident: field.name }))
-}
-
 fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
     let mut rng = rand::thread_rng();
 
@@ -226,28 +206,26 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
 
     let mut new = Vec::new();
     state.current.clear();
-    for screen in get_outputs()? {
+    let screens = state.monitor.idents().context(MonitorErr)?;
+    for screen in screens {
         let path = if let Some(pick) = filtered.choose(&mut rng) {
             new.push(*pick);
             let path = Path::new(&state.wp_dir)
                 .join(storage.relative_paths.get(*pick).unwrap().as_str())
                 .into_string()
                 .unwrap();
-            let arg = format!(
-                r#"output {} background "{}" {}"#,
-                screen.ident, path, state.mode
-            );
 
-            Command::new("swaymsg")
-                .arg(arg)
-                .output()
-                .context(SwaymsgLaunch)?;
+            state
+                .monitor
+                .set_wallpaper(state.mode, &screen, &path)
+                .context(MonitorErr)?;
+
             Some(path)
         } else {
             None
         };
 
-        state.current.insert(screen.ident, path);
+        state.current.insert(screen, path);
     }
 
     for filter in &mut state.filters {
@@ -317,23 +295,22 @@ enum Error {
         source: io::Error,
     },
 
-    #[snafu(display("Can't launch swaymsg: {}", source))]
-    SwaymsgLaunch {
-        source: io::Error,
-    },
-
     #[snafu(display("Can't decode json received from swaymsg: {}", source))]
     Json {
         source: serde_json::Error,
     },
 
-    #[snafu(display("Error while doing ipc: {}", source))]
+    #[snafu(display("{}", source))]
     Ipc {
         source: oneshot_reqrep::Error,
     },
 
     Config {
         source: cfgen::Error,
+    },
+
+    MonitorErr {
+        source: monitor::Error,
     },
 }
 

@@ -1,5 +1,6 @@
 ---
 wp-dir: "~/Pictures"
+backend: sway
 mode: fill
 rescan-interval: 600
 refresh-interval: 300
