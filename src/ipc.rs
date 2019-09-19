@@ -25,7 +25,15 @@ pub enum Command {
     Current,
 
     /// Print active filters
-    Filters,
+    Filters {
+        #[structopt(subcommand)]
+        action: Option<FilterCommand>,
+    },
+}
+
+#[derive(StructOpt, Debug, Serialize, Deserialize, Copy, Clone)]
+pub enum FilterCommand {
+    Rm { id: usize },
 }
 
 #[derive(Serialize, Deserialize)]

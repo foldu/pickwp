@@ -34,7 +34,7 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::{
     filter::Filter,
-    ipc::Reply,
+    ipc::{FilterCommand, Reply},
     monitor::{Mode, Monitor},
     storage::{RelativePath, Storage, StorageFlags},
     util::{preemptible_interval, PathBufExt},
@@ -109,14 +109,14 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                 if let Some(req) = req {
                     log::debug!("Received cmd {:#?}", req.kind());
                     use ipc::Command::*;
-                    match req.kind() {
+                    let rep = match req.kind() {
                         Refresh => {
                             refresh_preempt.preempt().await.unwrap();
-                            try_or_err!(req.reply(&Ok(Reply::Unit)).await);
+                            Ok(Reply::Unit)
                         }
                         Rescan => {
                             rescan_preempt.preempt().await.unwrap();
-                            try_or_err!(req.reply(&Ok(Reply::Unit)).await);
+                            Ok(Reply::Unit)
                         }
                         ReloadConfig => {
                             match config::Config::load() {
@@ -124,22 +124,35 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                                     // FIXME: not all things are properly reset like
                                     // {rescan,refresh}_interval
                                     state = State::from_config(config);
-                                    try_or_err!(req.reply(&Ok(Reply::Unit)).await);
                                     log::info!("Reloaded config");
+                                    Ok(Reply::Unit)
                                 }
                                 Err(e) => {
-                                    try_or_err!(req.reply(&Err(e.to_string())).await);
+                                   Err(e.to_string())
                                 }
                             }
                         }
                         Current => {
-                            try_or_err!(req.reply(&Ok(Reply::Wps(state.current.clone()))).await);
+                            Ok(Reply::Wps(state.current.clone()))
                         }
-                        Filters => {
-                            let filters = state.filters.iter().map(|filter| filter.serializeable()).collect();
-                            try_or_err!(req.reply(&Ok(Reply::Filters(filters))).await);
+                        Filters { action } => {
+                            match action {
+                                None => {
+                                    Ok(Reply::Filters(state.filters.iter().map(|filter| filter.serializeable()).collect()))
+                                }
+                                Some(FilterCommand::Rm { id }) => {
+                                    if *id < state.filters.len() {
+                                        state.filters.remove(*id);
+                                        Ok(Reply::Unit)
+                                    } else {
+                                        Err(format!("No filter with id {}", id))
+                                    }
+                                }
+                            }
                         }
                     };
+
+                    try_or_err!(req.reply(&rep).await);
                 }
             }
         }
