@@ -42,9 +42,9 @@ use crate::{
 
 async fn run(handle: current_thread::Handle) -> Result<(), Error> {
     let opt = Opt::from_args();
-    match opt {
-        Opt::Daemon => run_server(handle).await?,
-        Opt::Client(cmd) => client::run(cmd).await.context(Ipc)?,
+    match opt.cmd {
+        None => run_server(handle).await?,
+        Some(cmd) => client::run(cmd).await.context(Ipc)?,
     }
 
     Ok(())
@@ -183,12 +183,9 @@ impl State {
 }
 
 #[derive(StructOpt, Debug)]
-enum Opt {
-    #[structopt(name = "daemon")]
-    Daemon,
-
-    #[structopt(name = "send")]
-    Client(ipc::Command),
+struct Opt {
+    #[structopt(subcommand)]
+    cmd: Option<ipc::Command>,
 }
 
 fn register_signal(kind: SignalKind) -> Result<Signal, Error> {
