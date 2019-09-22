@@ -83,8 +83,10 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
     loop {
         futures::select! {
             _ = refresh.next() => {
-                log::info!("Refreshing");
-                set_wallpapers(&mut state, &storage)?;
+                if !state.frozen {
+                    log::info!("Refreshing");
+                    set_wallpapers(&mut state, &storage)?;
+                }
             }
             _ = rescan.next() => {
                 log::info!("Starting rescan");
@@ -154,6 +156,10 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                                 }
                             }
                         }
+                        ToggleFreeze => {
+                            state.frozen = !state.frozen;
+                            Ok(Reply::FreezeStatus(state.frozen))
+                        }
                     };
 
                     try_or_err!(req.reply(&rep).await);
@@ -172,6 +178,7 @@ struct State {
     refresh_interval: u64,
     current: HashMap<String, Option<String>>,
     monitor: Box<dyn Monitor>,
+    frozen: bool,
 }
 
 impl State {
@@ -187,6 +194,7 @@ impl State {
             .fold(StorageFlags::NONE, |flags, flag| flag | flags);
 
         Self {
+            frozen: false,
             filters,
             current: Default::default(),
             needed,

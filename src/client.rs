@@ -33,13 +33,22 @@ struct FilterWithId {
     filter: config::Filter,
 }
 
+#[derive(Serialize)]
+struct Freeze {
+    frozen: bool,
+}
+
 pub async fn run(cmd: Command, cmd_config: CmdConfig) -> Result<(), oneshot_reqrep::Error> {
     let formatter = if cmd_config.json {
         Formatter::Json
     } else {
         Formatter::Yaml
     };
+
     match send_request(SOCK_PATH, cmd).await? {
+        Ok(Reply::FreezeStatus(frozen)) => {
+            formatter.print(&Freeze { frozen });
+        }
         Ok(Reply::Wps(wps)) => {
             formatter.print(&wps);
         }

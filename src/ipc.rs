@@ -29,6 +29,9 @@ pub enum Command {
         #[structopt(subcommand)]
         action: Option<FilterCommand>,
     },
+
+    /// Stop changing current wallpapers
+    ToggleFreeze,
 }
 
 #[derive(StructOpt, Debug, Serialize, Deserialize)]
@@ -48,6 +51,7 @@ pub enum Reply {
     Unit,
     Wps(HashMap<String, Option<String>>),
     Filters(Vec<config::Filter>),
+    FreezeStatus(bool),
 }
 
 impl Req for Command {
