@@ -24,7 +24,7 @@ strum_macros = "0.16.0"
 bytes = ""
 humantime-serde = "0.1.1"
 slotmap = { version = "0.4.0", features = ["unstable"] }
-bitflags = "1.2.0"
+bitflags = "1.2.1"
 serde_yaml = "0.8.9"
 
 [dependencies.oneshot-reqrep]
