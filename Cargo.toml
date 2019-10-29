@@ -25,7 +25,7 @@ bytes = ""
 humantime-serde = "0.1.1"
 slotmap = { version = "0.4.0", features = ["unstable"] }
 bitflags = "1.2.0"
-serde_yaml = "0.8.9"
+serde_yaml = "0.8.11"
 
 [dependencies.oneshot-reqrep]
 git = "https://github.com/foldu/oneshot-reqrep"
