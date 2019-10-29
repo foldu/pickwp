@@ -7,10 +7,10 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "=0.2.0-alpha.4", default-features = false, features = ["rt-full", "signal"] }
-tokio-net = { version = "=0.2.0-alpha.4", default-features = false, features = ["signal"] }
+tokio = { version = "=0.2.0-alpha.6", default-features = false, features = ["rt-full", "signal"] }
+tokio-net = { version = "=0.2.0-alpha.6", default-features = false, features = ["signal"] }
 snafu = { version = "0.5.0", default-features = false, features = ["rust_1_30"] }
-futures-preview = { version = "=0.3.0-alpha.18", features = ["async-await", "nightly"] }
+futures-preview = { version = "=0.3.0-alpha.19", features = ["async-await"] }
 log = "0.4.8"
 env_logger = { version = "0.6.2", default-features = false, features = ["termcolor", "atty", "humantime"] }
 structopt = "0.3.1"
@@ -29,7 +29,7 @@ serde_yaml = "0.8.9"
 
 [dependencies.oneshot-reqrep]
 git = "https://github.com/foldu/oneshot-reqrep"
-rev = "0c0d467109112d5c1ef3081e438cd704bc6600d9"
+rev = "1b5dc91e2f1a982aba3d0afab9d3f8cc29137f67"
 
 [dependencies.cfgen]
 git = "https://github.com/foldu/cfgen"
