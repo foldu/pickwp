@@ -7,10 +7,9 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "0.2.0-alpha.6", default-features = false, features = ["rt-full", "signal"] }
-tokio-net = { version = "0.2.0-alpha.6", default-features = false, features = ["signal"] }
+tokio = { version = "0.2.2", default-features = false, features = ["rt-core", "signal", "sync", "time", "blocking", "stream"] }
 snafu = { version = "0.5.0", default-features = false, features = ["rust_1_30"] }
-futures-preview = { version = "0.3.0-alpha.19", features = ["async-await"] }
+futures-util = "0.3"
 log = "0.4.8"
 env_logger = { version = "0.7.1", default-features = false, features = ["termcolor", "atty", "humantime"] }
 structopt = "0.3.3"
@@ -27,12 +26,12 @@ slotmap = { version = "0.4.0", features = ["unstable"] }
 bitflags = "1.2.1"
 serde_yaml = "0.8.11"
 
-[dependencies.oneshot-reqrep]
-git = "https://github.com/foldu/oneshot-reqrep"
-rev = "1b5dc91e2f1a982aba3d0afab9d3f8cc29137f67"
-
 [dependencies.cfgen]
 git = "https://github.com/foldu/cfgen"
 rev = "a7373582f2ea6381cbdaffdb4cf1163478e5d17b"
 default-features = false
 features = ["yaml", "expandpath"]
+
+[dependencies.oneshot-reqrep]
+git = "https://github.com/foldu/oneshot-reqrep"
+rev = "f0bd99a0db487823ce5334037520a1472bb869c0"

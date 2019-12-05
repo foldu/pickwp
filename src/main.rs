@@ -10,28 +10,6 @@ mod monitor;
 mod storage;
 mod util;
 
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-    io,
-    os::unix::prelude::*,
-    path::Path,
-    thread,
-    time::Duration,
-};
-
-use cfgen::prelude::*;
-use futures::{pin_mut, prelude::*, stream};
-use rand::prelude::*;
-use snafu::{ResultExt, Snafu};
-use structopt::StructOpt;
-use tokio::{
-    runtime::current_thread,
-    sync::mpsc::{self, Receiver},
-};
-use tokio_net::signal::unix::{signal, Signal, SignalKind};
-use walkdir::{DirEntry, WalkDir};
-
 use crate::{
     filter::Filter,
     ipc::{FilterCommand, Reply},
@@ -39,19 +17,43 @@ use crate::{
     storage::{RelativePath, Storage, StorageFlags},
     util::{preemptible_interval, PathBufExt},
 };
+use cfgen::prelude::*;
+use futures_util::{
+    pin_mut,
+    stream::{self, StreamExt},
+};
+use rand::prelude::*;
+use snafu::{ResultExt, Snafu};
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    io,
+    os::unix::prelude::*,
+    path::Path,
+    time::Duration,
+};
+use structopt::StructOpt;
+use tokio::{
+    signal::unix::{signal, Signal, SignalKind},
+    sync::mpsc::{self},
+    task,
+};
+use walkdir::{DirEntry, WalkDir};
 
-async fn run(handle: current_thread::Handle) -> Result<(), Error> {
+async fn run() -> Result<(), Error> {
     let opt = Opt::from_args();
     match opt.cmd {
-        None => run_server(handle).await?,
+        None => run_server().await?,
         Some(cmd) => client::run(cmd, opt.cmd_config).await.context(Ipc)?,
     }
 
     Ok(())
 }
 
-async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
-    let commands = oneshot_reqrep::listen(ipc::SOCK_PATH).context(Ipc)?.fuse();
+async fn run_server() -> Result<(), Error> {
+    let commands = oneshot_reqrep::listen(ipc::SOCK_PATH, 16)
+        .context(Ipc)?
+        .fuse();
     pin_mut!(commands);
 
     let (_, config) = config::Config::load_or_write_default().context(Config)?;
@@ -59,9 +61,7 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
     let mut state = State::from_config(config);
 
     let mut storage = Storage::new();
-    let wps: Vec<_> = get_wallpapers(handle.clone(), state.wp_dir.to_string(), state.needed)
-        .collect()
-        .await;
+    let wps: Vec<_> = get_wallpapers(state.wp_dir.to_string(), state.needed).await;
     storage.refresh(wps);
 
     let (mut refresh_preempt, refresh) =
@@ -81,7 +81,7 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
 
     set_wallpapers(&mut state, &storage)?;
     loop {
-        futures::select! {
+        futures_util::select! {
             _ = refresh.next() => {
                 if !state.frozen {
                     log::info!("Refreshing");
@@ -91,11 +91,10 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
             _ = rescan.next() => {
                 log::info!("Starting rescan");
                 let wp_dir = state.wp_dir.clone();
-                let handle = handle.clone();
                 let needed = state.needed;
                 let mut new_wp_tx = new_wp_tx.clone();
-                current_thread::spawn(async move {
-                    let wps: Vec<_> = get_wallpapers(handle, wp_dir, needed).collect().await;
+                task::spawn(async move {
+                    let wps: Vec<_> = get_wallpapers( wp_dir, needed).await;
                     new_wp_tx.send(wps).await.unwrap();
                 });
             }
@@ -113,11 +112,11 @@ async fn run_server(handle: current_thread::Handle) -> Result<(), Error> {
                     use ipc::Command::*;
                     let rep = match req.kind() {
                         Refresh => {
-                            refresh_preempt.preempt().await.unwrap();
+                            refresh_preempt.preempt().await;
                             Ok(Reply::Unit)
                         }
                         Rescan => {
-                            rescan_preempt.preempt().await.unwrap();
+                            rescan_preempt.preempt().await;
                             Ok(Reply::Unit)
                         }
                         ReloadConfig => {
@@ -270,18 +269,16 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
     Ok(())
 }
 
-fn get_wallpapers(
-    handle: current_thread::Handle,
+async fn get_wallpapers(
     dir: String,
     needed: StorageFlags,
-) -> Receiver<(RelativePath, Option<storage::Time>)> {
-    let (tx, rx) = mpsc::channel(64);
-    thread::spawn(move || {
-        WalkDir::new(&dir).into_iter().for_each(move |entry| {
+) -> Vec<(RelativePath, Option<storage::Time>)> {
+    task::spawn_blocking(move || {
+        let mut ret = Vec::new();
+        WalkDir::new(&dir).into_iter().for_each(|entry| {
             if let Ok(entry) = entry {
                 let is_image = is_image(&entry);
                 if is_image {
-                    let mut tx = tx.clone();
                     let time = if needed.contains(StorageFlags::FILETIME) {
                         entry
                             .metadata()
@@ -295,17 +292,15 @@ fn get_wallpapers(
                     };
 
                     if let (Ok(relative), Ok(time)) = (relative, time) {
-                        let _ = handle.spawn(async move {
-                            // FIXME: stop when rx hangs up
-                            let _ = tx.send((relative, time)).await;
-                        });
+                        ret.push((relative, time));
                     }
                 }
             }
         });
-    });
-
-    rx
+        ret
+    })
+    .await
+    .unwrap_or_else(|_| Vec::new())
 }
 
 static IMAGE_EXTENSIONS: phf::Set<&'static [u8]> = phf::phf_set! {
@@ -353,9 +348,14 @@ enum Error {
 fn main() {
     std::env::set_var("RUST_LOG", "pickwp=info");
     env_logger::init();
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let handle = rt.handle();
-    if let Err(e) = rt.block_on(run(handle)) {
+    let mut rt = tokio::runtime::Builder::new()
+        .basic_scheduler()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    if let Err(e) = rt.block_on(run()) {
         eprintln!("{}", e);
         std::process::exit(1);
     }
