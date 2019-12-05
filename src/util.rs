@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use futures_util::stream::{Stream, StreamExt};
+use futures_util::{
+    future,
+    stream::{Stream, StreamExt},
+};
 use tokio::{sync::mpsc, task, time};
 
 pub trait PathBufExt {
@@ -24,26 +27,15 @@ impl Preempter {
     }
 }
 
-pub fn preemptible_interval(timeout: Duration) -> (Preempter, impl Stream<Item = ()>) {
-    let (preempt_tx, preempt_rx) = mpsc::channel(4);
+pub fn preemptible_interval(time: Duration) -> (Preempter, impl Stream<Item = ()>) {
+    let (preempt_tx, mut preempt_rx) = mpsc::channel(1);
 
-    let (mut inner_tx, inner_rx) = mpsc::channel(4);
+    let (mut inner_tx, inner_rx) = mpsc::channel(1);
     task::spawn(async move {
-        let mut interval = time::interval(timeout).fuse();
-        let mut preempt_rx = preempt_rx.fuse();
+        let mut timeout = time::delay_for(time);
         loop {
-            futures_util::select! {
-                _ = interval.next() => {
-                }
-                preemption = preempt_rx.next() => {
-                    // preempter dropped, time to stop
-                    if let None = preemption {
-                        break;
-                    }
-                    interval = time::interval(timeout).fuse();
-                }
-            }
-
+            future::select(timeout, preempt_rx.next()).await;
+            timeout = time::delay_for(time);
             let _ = inner_tx.send(()).await;
         }
     });

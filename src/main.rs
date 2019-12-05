@@ -346,7 +346,10 @@ enum Error {
 }
 
 fn main() {
-    std::env::set_var("RUST_LOG", "pickwp=info");
+    let log = "RUST_LOG";
+    if let Err(_) = std::env::var(log) {
+        std::env::set_var("RUST_LOG", "pickwp=info");
+    }
     env_logger::init();
     let mut rt = tokio::runtime::Builder::new()
         .basic_scheduler()
