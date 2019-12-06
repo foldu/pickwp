@@ -13,11 +13,11 @@ jobs:
         # The docs seem to suggest that we can have a matrix with just an
         # include directive, but it result in a "matrix must define at least
         # one vector" error in the CI system.
-        build: [nightly]
+        build: [stable]
         include:
-          - build: nightly
+          - build: stable
             os: ubuntu-18.04
-            rust: nightly
+            rust: stable
     steps:
       - name: Checkout repository
         uses: actions/checkout@v1

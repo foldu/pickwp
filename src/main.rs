@@ -1,5 +1,4 @@
 #![recursion_limit = "1024"]
-#![feature(proc_macro_hygiene)]
 
 mod client;
 mod config;
@@ -60,7 +59,7 @@ async fn run_server() -> Result<(), Error> {
 
     let mut state = State::from_config(config);
 
-    let mut storage = Storage::new();
+    let mut storage = Storage::default();
     let wps: Vec<_> = get_wallpapers(state.wp_dir.to_string(), state.needed).await;
     storage.refresh(wps);
 
