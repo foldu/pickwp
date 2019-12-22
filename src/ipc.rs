@@ -18,9 +18,6 @@ pub enum Command {
     /// Rescan wallpaper directory
     Rescan,
 
-    /// Reload config file
-    ReloadConfig,
-
     /// Print currently selected wallpapers
     Current,
 
