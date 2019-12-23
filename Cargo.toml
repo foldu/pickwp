@@ -7,22 +7,22 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "0.2.2", features = ["rt-core", "signal", "sync", "time", "blocking", "stream"] }
-snafu = { version = "0.5.0", features = ["rust_1_30"] }
-futures-util = { version = "0.3" }
+tokio = { version = "0.2.6", features = ["rt-core", "signal", "sync", "time", "blocking", "stream", "fs"] }
+snafu = "0.6.0"
+futures-util = "0.3.1"
 log = "0.4.8"
 env_logger = { version = "0.7.1", default-features = false, features = ["termcolor", "atty", "humantime"] }
-structopt = "0.3.3"
+structopt = "0.3.5"
 walkdir = "2.2.9"
-serde = { version = "1.0.102", features = ["derive"] }
+serde = { version = "1.0.103", features = ["derive"] }
 rand = "0.7.2"
 phf = { version = "0.8.0", features = ["macros"] }
-serde_json = "1.0.41"
+serde_json = "1.0.44"
 strum = "0.16.0"
 strum_macros = "0.16.0"
-bytes = "0.4.12"
+bytes = "0.5.2"
 humantime-serde = "0.1.1"
-slotmap = { version = "0.4.0", features = ["unstable"] }
+slotmap = "0.4.0"
 bitflags = "1.2.1"
 serde_yaml = "0.8.11"
 rusqlite = "0.21.0"
@@ -30,6 +30,8 @@ tgcd = { path = "../tgcd" }
 refinery = { version = "0.2.0-alpha.2", features = ["rusqlite"] }
 directories = "2.0.2"
 refinery-migrations = "0.2.0-alpha.2"
+inotify = "0.8.0"
+once_cell = "1.2.0"
 
 [dependencies.cfgen]
 git = "https://github.com/foldu/cfgen"

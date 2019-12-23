@@ -1,5 +1,4 @@
 #![recursion_limit = "1024"]
-#![feature(proc_macro_hygiene)]
 
 mod cache;
 mod client;
@@ -10,6 +9,7 @@ mod macros;
 mod monitor;
 mod storage;
 mod util;
+mod watch_file;
 
 use crate::{
     filter::Filter,
@@ -18,7 +18,6 @@ use crate::{
     storage::{RelativePath, Storage, StorageFlags},
     util::{preemptible_interval, PathBufExt},
 };
-use cfgen::prelude::*;
 use futures_util::{
     pin_mut,
     stream::{self, StreamExt},
@@ -57,11 +56,18 @@ async fn run_server() -> Result<(), Error> {
         .fuse();
     pin_mut!(commands);
 
-    let (_, config) = config::Config::load_or_write_default().context(Config)?;
+    let config = config::Config::load_or_write_default()
+        .await
+        .context(Config)?;
+
+    let (watch_task, config_reload) =
+        watch_file::watch_file(&*config::CONFIG_PATH, std::time::Duration::from_secs(5)).unwrap();
+    tokio::task::spawn(watch_task);
+    let mut config_reload = config_reload.fuse();
 
     let mut state = State::from_config(config);
 
-    let mut storage = Storage::new();
+    let mut storage = Storage::default();
     let wps: Vec<_> = get_wallpapers(state.wp_dir.to_string(), state.needed).await;
     storage.refresh(wps);
 
@@ -87,6 +93,18 @@ async fn run_server() -> Result<(), Error> {
                 if !state.frozen {
                     log::info!("Refreshing");
                     set_wallpapers(&mut state, &storage)?;
+                }
+            }
+            buf = config_reload.next() => {
+                let buf = buf.expect("Config reload died");
+                match config::Config::load_from_buf(&buf) {
+                    Ok(cfg) => {
+                        log::info!("Reloaded config");
+                        state = State::from_config(cfg);
+                    }
+                    Err(e) => {
+                        log::error!("{}", e);
+                    }
                 }
             }
             _ = rescan.next() => {
@@ -119,20 +137,6 @@ async fn run_server() -> Result<(), Error> {
                         Rescan => {
                             rescan_preempt.preempt().await;
                             Ok(Reply::Unit)
-                        }
-                        ReloadConfig => {
-                            match config::Config::load() {
-                                Ok(config) => {
-                                    // FIXME: not all things are properly reset like
-                                    // {rescan,refresh}_interval
-                                    state = State::from_config(config);
-                                    log::info!("Reloaded config");
-                                    Ok(Reply::Unit)
-                                }
-                                Err(e) => {
-                                   Err(e.to_string())
-                                }
-                            }
                         }
                         Current => {
                             Ok(Reply::Wps(state.current.clone()))
@@ -198,7 +202,7 @@ impl State {
             filters,
             current: Default::default(),
             needed,
-            wp_dir: config.wp_dir.0.into_string().unwrap(),
+            wp_dir: config.wp_dir.into_string().unwrap(),
             mode: config.mode,
             refresh_interval: config.refresh_interval,
             rescan_interval: config.refresh_interval,
@@ -338,7 +342,7 @@ enum Error {
     },
 
     Config {
-        source: cfgen::Error,
+        source: config::Error,
     },
 
     MonitorErr {

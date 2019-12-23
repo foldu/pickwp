@@ -27,27 +27,33 @@ bitflags! {
 
 #[derive(Debug)]
 pub struct Storage {
-    pub relative_paths: SlotMap<FileKey, RelativePath>,
+    pub paths: SlotMap<FileKey, ()>,
+    pub relative_paths: SecondaryMap<FileKey, RelativePath>,
     pub times: SecondaryMap<FileKey, Time>,
 }
 
-impl Storage {
-    pub fn new() -> Self {
+impl Default for Storage {
+    fn default() -> Self {
         Self {
-            relative_paths: SlotMap::with_key(),
+            paths: SlotMap::with_key(),
+            relative_paths: SecondaryMap::new(),
             times: SecondaryMap::new(),
         }
     }
+}
 
+impl Storage {
     pub fn refresh<I>(&mut self, it: I)
     where
         I: IntoIterator<Item = (RelativePath, Option<Time>)>,
     {
+        self.paths.clear();
         self.relative_paths.clear();
         self.times.clear();
 
         for (path, time) in it {
-            let key = self.relative_paths.insert(path);
+            let key = self.paths.insert(());
+            self.relative_paths.insert(key, path);
             if let Some(time) = time {
                 self.times.insert(key, time);
             }
@@ -55,7 +61,7 @@ impl Storage {
     }
 
     pub fn keys(&self) -> impl Iterator<Item = FileKey> + '_ {
-        self.relative_paths.keys()
+        self.paths.keys()
     }
 }
 

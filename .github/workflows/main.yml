@@ -13,11 +13,11 @@ jobs:
         # The docs seem to suggest that we can have a matrix with just an
         # include directive, but it result in a "matrix must define at least
         # one vector" error in the CI system.
-        build: [nightly]
+        build: [stable]
         include:
-          - build: nightly
+          - build: stable
             os: ubuntu-18.04
-            rust: nightly
+            rust: stable
     steps:
       - name: Checkout repository
         uses: actions/checkout@v1
@@ -51,3 +51,23 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
+
+  deny-check:
+    name: cargo-deny check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: download cargo-deny
+      shell: bash
+      env:
+        DVS: "0.4.0"
+        DREPO: EmbarkStudios/cargo-deny
+        TARGET: x86_64-unknown-linux-musl
+      run: |
+        temp_archive=$(mktemp --suffix=.tar.gz)
+        curl -L --output "$temp_archive" https://github.com/$DREPO/releases/download/$DVS/cargo-deny-$DVS-$TARGET.tar.gz
+        tar -xzvf "$temp_archive" -C . --strip-components=1 --wildcards "*/cargo-deny"
+    - name: cargo-deny check licenses
+      run: ./cargo-deny -L debug check license
+    - name: cargo-deny check bans
+      run: ./cargo-deny -L debug check ban
