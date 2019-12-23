@@ -1,6 +1,7 @@
 #![recursion_limit = "1024"]
 #![feature(proc_macro_hygiene)]
 
+mod cache;
 mod client;
 mod config;
 mod filter;

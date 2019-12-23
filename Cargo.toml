@@ -25,10 +25,15 @@ humantime-serde = "0.1.1"
 slotmap = { version = "0.4.0", features = ["unstable"] }
 bitflags = "1.2.1"
 serde_yaml = "0.8.11"
+rusqlite = "0.21.0"
+tgcd = { path = "../tgcd" }
+refinery = { version = "0.2.0-alpha.2", features = ["rusqlite"] }
+directories = "2.0.2"
+refinery-migrations = "0.2.0-alpha.2"
 
 [dependencies.cfgen]
 git = "https://github.com/foldu/cfgen"
-rev = "a7373582f2ea6381cbdaffdb4cf1163478e5d17b"
+rev = "6cafcff155e0c760d046e73c8982c003b2615043"
 default-features = false
 features = ["yaml", "expandpath"]
 
