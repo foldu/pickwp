@@ -1,13 +1,11 @@
-use std::path::PathBuf;
-
+use crate::{
+    filter::{FilenameFilter, TagFilter, TimeFilter},
+    monitor::Mode,
+};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
-
-use crate::{
-    filter::{FilenameFilter, TimeFilter},
-    monitor::Mode,
-};
+use std::path::PathBuf;
 
 const DEFAULT: &str = include_str!("../default_config.yml");
 
@@ -76,6 +74,8 @@ pub enum Filter {
     FileTime(TimeFilter),
 
     Filename(FilenameFilter),
+
+    Tag(TagFilter),
 }
 
 impl std::str::FromStr for Filter {

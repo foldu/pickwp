@@ -7,6 +7,7 @@ mod filter;
 mod ipc;
 mod macros;
 mod monitor;
+mod scan;
 mod storage;
 mod util;
 mod watch_file;
@@ -15,61 +16,58 @@ use crate::{
     filter::Filter,
     ipc::{FilterCommand, Reply},
     monitor::{Mode, Monitor},
-    storage::{RelativePath, Storage, StorageFlags},
+    storage::Storage,
     util::{preemptible_interval, PathBufExt},
 };
 use futures_util::{
+    future::TryFutureExt,
     pin_mut,
     stream::{self, StreamExt},
 };
 use rand::prelude::*;
 use snafu::{ResultExt, Snafu};
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-    io,
-    os::unix::prelude::*,
-    path::Path,
-    time::Duration,
-};
+use std::{collections::HashMap, io, path::Path, time::Duration};
 use structopt::StructOpt;
 use tokio::{
     signal::unix::{signal, Signal, SignalKind},
-    sync::mpsc::{self},
     task,
 };
-use walkdir::{DirEntry, WalkDir};
 
 async fn run() -> Result<(), Error> {
     let opt = Opt::from_args();
     match opt.cmd {
         None => run_server().await?,
-        Some(cmd) => client::run(cmd, opt.cmd_config).await.context(Ipc)?,
+        Some(cmd) => client::run(cmd, opt.cmd_config).await?,
     }
 
     Ok(())
 }
 
 async fn run_server() -> Result<(), Error> {
-    let commands = oneshot_reqrep::listen(ipc::SOCK_PATH, 16)
-        .context(Ipc)?
-        .fuse();
+    let commands = oneshot_reqrep::listen(ipc::SOCK_PATH, 16)?.fuse();
     pin_mut!(commands);
 
-    let config = config::Config::load_or_write_default()
-        .await
-        .context(Config)?;
+    let config = config::Config::load_or_write_default().await?;
 
     let (watch_task, config_reload) =
         watch_file::watch_file(&*config::CONFIG_PATH, std::time::Duration::from_secs(5)).unwrap();
     tokio::task::spawn(watch_task);
     let mut config_reload = config_reload.fuse();
 
-    let mut state = State::from_config(config);
+    // FIXME: unwrap
+    let (scan_ctx, mut new_wp_rx) = scan::ScanCtx::new().unwrap();
+    task::spawn(
+        scan_ctx
+            .scan(config.wp_dir.clone().into_string().unwrap())
+            .unwrap()
+            .map_err(|e| log::error!("{}", e)),
+    );
+    let mut state = State::from_config(config, &scan_ctx.get_cache())
+        .map_err(|e| Error::FilterCreate { src: e })?;
 
     let mut storage = Storage::default();
-    let wps: Vec<_> = get_wallpapers(state.wp_dir.to_string(), state.needed).await;
-    storage.refresh(wps);
+    storage.refresh(new_wp_rx.next().await.unwrap(), &scan_ctx.get_cache());
+    let mut new_wp_rx = new_wp_rx.fuse();
 
     let (mut refresh_preempt, refresh) =
         preemptible_interval(Duration::from_secs(state.refresh_interval));
@@ -82,9 +80,6 @@ async fn run_server() -> Result<(), Error> {
     let int = register_signal(SignalKind::interrupt())?;
     let term = register_signal(SignalKind::terminate())?;
     let mut terminate = stream::select(int, term).fuse();
-
-    let (new_wp_tx, new_wp_rx) = mpsc::channel(1);
-    let mut new_wp_rx = new_wp_rx.fuse();
 
     set_wallpapers(&mut state, &storage)?;
     loop {
@@ -100,7 +95,14 @@ async fn run_server() -> Result<(), Error> {
                 match config::Config::load_from_buf(&buf) {
                     Ok(cfg) => {
                         log::info!("Reloaded config");
-                        state = State::from_config(cfg);
+                        match State::from_config(cfg, &scan_ctx.get_cache()) {
+                            Ok(new_state) => {
+                                refresh_preempt.preempt().await;
+                                state = new_state;
+                            }
+
+                            Err(e) => log::error!("{}", e),
+                        }
                     }
                     Err(e) => {
                         log::error!("{}", e);
@@ -110,16 +112,14 @@ async fn run_server() -> Result<(), Error> {
             _ = rescan.next() => {
                 log::info!("Starting rescan");
                 let wp_dir = state.wp_dir.clone();
-                let needed = state.needed;
-                let mut new_wp_tx = new_wp_tx.clone();
-                task::spawn(async move {
-                    let wps: Vec<_> = get_wallpapers( wp_dir, needed).await;
-                    new_wp_tx.send(wps).await.unwrap();
-                });
+                if let Some(task) = scan_ctx.scan(wp_dir) {
+                    task::spawn(task);
+                }
             }
             new_wps = new_wp_rx.next() => {
                 if let Some(new_wps) = new_wps {
-                    storage.refresh(new_wps);
+                    let cache= scan_ctx.get_cache();
+                    storage.refresh(new_wps, &cache);
                 }
             }
             _ = terminate.next() => {
@@ -174,7 +174,6 @@ async fn run_server() -> Result<(), Error> {
 }
 
 struct State {
-    needed: StorageFlags,
     filters: Vec<Box<dyn Filter>>,
     wp_dir: String,
     mode: Mode,
@@ -186,28 +185,31 @@ struct State {
 }
 
 impl State {
-    fn from_config(config: config::Config) -> Self {
+    fn from_config(
+        config: config::Config,
+        cache: &crate::cache::Cache,
+    ) -> Result<Self, crate::filter::FilterCreateError> {
         let filters: Vec<Box<dyn Filter>> = config
             .filters
             .into_iter()
             .map(|filter| filter.into())
-            .collect();
-        let needed = filters
-            .iter()
-            .map(|filter| filter.needed_storages())
-            .fold(StorageFlags::NONE, |flags, flag| flag | flags);
+            .map(|filter: Box<dyn Filter>| match filter.read_ctx(cache) {
+                Ok(Some(new)) => Ok(new),
+                Ok(None) => Ok(filter),
+                Err(e) => Err(e),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-        Self {
+        Ok(Self {
             frozen: false,
             filters,
             current: Default::default(),
-            needed,
             wp_dir: config.wp_dir.into_string().unwrap(),
             mode: config.mode,
             refresh_interval: config.refresh_interval,
             rescan_interval: config.refresh_interval,
             monitor: config.backend.into(),
-        }
+        })
     }
 }
 
@@ -245,7 +247,7 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
 
     let mut new = Vec::new();
     state.current.clear();
-    let screens = state.monitor.idents().context(MonitorErr)?;
+    let screens = state.monitor.idents()?;
     for screen in screens {
         let path = if let Some(pick) = filtered.choose(&mut rng) {
             new.push(*pick);
@@ -254,10 +256,7 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
                 .into_string()
                 .unwrap();
 
-            state
-                .monitor
-                .set_wallpaper(state.mode, &screen, &path)
-                .context(MonitorErr)?;
+            state.monitor.set_wallpaper(state.mode, &screen, &path)?;
 
             Some(path)
         } else {
@@ -274,80 +273,23 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
     Ok(())
 }
 
-async fn get_wallpapers(
-    dir: String,
-    needed: StorageFlags,
-) -> Vec<(RelativePath, Option<storage::Time>)> {
-    task::spawn_blocking(move || {
-        let mut ret = Vec::new();
-        WalkDir::new(&dir).into_iter().for_each(|entry| {
-            if let Ok(entry) = entry {
-                let is_image = is_image(&entry);
-                if is_image {
-                    let time = if needed.contains(StorageFlags::FILETIME) {
-                        entry
-                            .metadata()
-                            .map(|meta| Some(storage::Time::from_meta(&meta)))
-                    } else {
-                        Ok(None)
-                    };
-                    let relative = {
-                        let unprefixed = entry.path().strip_prefix(&dir).unwrap();
-                        RelativePath::try_from(unprefixed.to_owned())
-                    };
-
-                    if let (Ok(relative), Ok(time)) = (relative, time) {
-                        ret.push((relative, time));
-                    }
-                }
-            }
-        });
-        ret
-    })
-    .await
-    .unwrap_or_else(|_| Vec::new())
-}
-
-static IMAGE_EXTENSIONS: phf::Set<&'static [u8]> = phf::phf_set! {
-    b"jpe",
-    b"jpeg",
-    b"jpg",
-    b"png",
-};
-
-fn is_image(ent: &DirEntry) -> bool {
-    ent.file_type().is_file()
-        && ent
-            .path()
-            .extension()
-            .map(|ext| IMAGE_EXTENSIONS.contains(ext.as_bytes()))
-            .unwrap_or(false)
-}
-
 #[derive(Snafu, Debug)]
 enum Error {
     #[snafu(display("Can't register signal handler: {}", source))]
-    RegisterSignal {
-        source: io::Error,
-    },
-
-    #[snafu(display("Can't decode json received from swaymsg: {}", source))]
-    Json {
-        source: serde_json::Error,
-    },
+    RegisterSignal { source: io::Error },
 
     #[snafu(display("{}", source))]
-    Ipc {
-        source: oneshot_reqrep::Error,
-    },
+    #[snafu(context(false))]
+    Ipc { source: oneshot_reqrep::Error },
 
-    Config {
-        source: config::Error,
-    },
+    #[snafu(context(false))]
+    Config { source: config::Error },
 
-    MonitorErr {
-        source: monitor::Error,
-    },
+    #[snafu(context(false))]
+    MonitorErr { source: monitor::Error },
+
+    #[snafu(display("Can't create filter: {}", src))]
+    FilterCreate { src: filter::FilterCreateError },
 }
 
 fn main() {
@@ -360,6 +302,7 @@ fn main() {
         .basic_scheduler()
         .enable_io()
         .enable_time()
+        .core_threads(2)
         .build()
         .unwrap();
 

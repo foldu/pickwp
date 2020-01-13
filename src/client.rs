@@ -1,11 +1,10 @@
-use oneshot_reqrep::send_request;
-use serde::{Deserialize, Serialize};
-
 use crate::{
     config,
     ipc::{Command, Reply, SOCK_PATH},
     CmdConfig,
 };
+use oneshot_reqrep::send_request;
+use serde::{Deserialize, Serialize};
 
 enum Formatter {
     Json,

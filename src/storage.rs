@@ -1,17 +1,19 @@
+use crate::{
+    cache::{self, Cache},
+    util::PathBufExt,
+};
+use bitflags::bitflags;
+use serde::{Deserialize, Serialize};
+use slotmap::{new_key_type, SecondaryMap, SlotMap};
+use snafu::Snafu;
 use std::{
+    collections::{BTreeSet, HashMap, HashSet},
     convert::{TryFrom, TryInto},
     fs::Metadata,
     os::unix::prelude::*,
     path::PathBuf,
     time::{Duration, SystemTime},
 };
-
-use bitflags::bitflags;
-use serde::{Deserialize, Serialize};
-use slotmap::{new_key_type, SecondaryMap, SlotMap};
-use snafu::Snafu;
-
-use crate::util::PathBufExt;
 
 new_key_type! {
     pub struct FileKey;
@@ -25,11 +27,12 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
 pub struct Storage {
     pub paths: SlotMap<FileKey, ()>,
     pub relative_paths: SecondaryMap<FileKey, RelativePath>,
     pub times: SecondaryMap<FileKey, Time>,
+    pub tags: SecondaryMap<FileKey, BTreeSet<i32>>,
+    pub relative_keys: HashMap<RelativePath, FileKey>,
 }
 
 impl Default for Storage {
@@ -38,26 +41,46 @@ impl Default for Storage {
             paths: SlotMap::with_key(),
             relative_paths: SecondaryMap::new(),
             times: SecondaryMap::new(),
+            tags: SecondaryMap::new(),
+            relative_keys: HashMap::new(),
         }
     }
 }
 
 impl Storage {
-    pub fn refresh<I>(&mut self, it: I)
+    pub fn refresh<I>(&mut self, it: I, cache: &Cache) -> Result<(), cache::Error>
     where
-        I: IntoIterator<Item = (RelativePath, Option<Time>)>,
+        I: IntoIterator<Item = (RelativePath, Time)>,
     {
-        self.paths.clear();
-        self.relative_paths.clear();
-        self.times.clear();
+        let mut unvisited = self.paths.keys().collect::<HashSet<_>>();
 
         for (path, time) in it {
-            let key = self.paths.insert(());
-            self.relative_paths.insert(key, path);
-            if let Some(time) = time {
-                self.times.insert(key, time);
+            match self.relative_keys.get(&path) {
+                Some(key) => {
+                    unvisited.remove(key);
+                }
+                None => {
+                    let key = self.paths.insert(());
+                    let tags = cache.get_path_tags(&path)?;
+                    self.tags.insert(key, tags);
+                    self.relative_keys.insert(path.clone(), key);
+                    self.relative_paths.insert(key, path);
+                    self.times.insert(key, time);
+                }
             }
         }
+
+        println!("{:#?}", unvisited);
+
+        for key in unvisited {
+            self.times.remove(key);
+            self.tags.remove(key);
+            if let Some(rela_path) = self.relative_paths.remove(key) {
+                self.relative_keys.remove(&rela_path);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn keys(&self) -> impl Iterator<Item = FileKey> + '_ {
@@ -95,7 +118,7 @@ impl Time {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct RelativePath(String);
 
 #[derive(Snafu, Debug)]
@@ -123,6 +146,12 @@ impl TryFrom<PathBuf> for RelativePath {
 impl std::ops::Deref for RelativePath {
     type Target = String;
     fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<str> for RelativePath {
+    fn as_ref(&self) -> &str {
         &self.0
     }
 }

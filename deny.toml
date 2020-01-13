@@ -18,6 +18,8 @@ skip = [
 skip-tree = [
     # clap updates very slowly
     { name = "clap" },
+    # prost is still on syn 0.15
+    { name = "prost" },
     { name = "rand_core" },
 ]
 
