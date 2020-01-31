@@ -21,7 +21,6 @@ use crate::{
 };
 use futures_util::{
     future::TryFutureExt,
-    pin_mut,
     stream::{self, StreamExt},
 };
 use rand::prelude::*;
@@ -45,7 +44,7 @@ async fn run() -> Result<(), Error> {
 
 async fn run_server() -> Result<(), Error> {
     let commands = oneshot_reqrep::listen(ipc::SOCK_PATH, 16)?.fuse();
-    pin_mut!(commands);
+    tokio::pin!(commands);
 
     let config = config::Config::load_or_write_default().await?;
 
@@ -83,7 +82,7 @@ async fn run_server() -> Result<(), Error> {
 
     set_wallpapers(&mut state, &storage)?;
     loop {
-        futures_util::select! {
+        tokio::select! {
             _ = refresh.next() => {
                 if !state.frozen {
                     log::info!("Refreshing");

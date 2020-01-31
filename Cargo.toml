@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "0.2.6", features = ["rt-core", "signal", "sync", "time", "blocking", "stream", "fs"] }
+tokio = { version = "0.2.11", features = ["rt-core", "signal", "sync", "time", "blocking", "stream", "fs", "macros"] }
 snafu = { git = "https://github.com/shepmaster/snafu", rev = "1aa2f5dd93694503b990308e48e00dc67ea2770d"}
 futures-util = "0.3.1"
 log = "0.4.8"
