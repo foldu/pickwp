@@ -2,6 +2,7 @@ use crate::{
     cache::{self, Cache},
     storage::{RelativePath, Time},
 };
+use slog_scope::info;
 use snafu::ResultExt;
 use std::{
     convert::TryFrom,
@@ -50,32 +51,30 @@ async fn scan_dir(
         move || -> Result<Vec<(RelativePath, Time, Option<Blake2bHash>)>, Error> {
             let cache = ctx.cache.lock().unwrap();
             let mut ret = Vec::new();
-            WalkDir::new(&dir)
-                .into_iter()
-                .map(|entry| -> Result<(), Error> {
-                    if let Ok(entry) = entry {
-                        let is_image = is_image(&entry);
-                        if is_image {
-                            let time = entry.metadata().map(|meta| Time::from_meta(&meta));
-                            let relative = {
-                                let unprefixed = entry.path().strip_prefix(&dir).unwrap();
-                                RelativePath::try_from(unprefixed.to_owned())
-                            };
+            for entry in WalkDir::new(&dir) {
+                if let Ok(entry) = entry {
+                    let is_image = is_image(&entry);
+                    if is_image {
+                        let time = entry.metadata().map(|meta| Time::from_meta(&meta));
+                        let relative = {
+                            let unprefixed = entry.path().strip_prefix(&dir).unwrap();
+                            RelativePath::try_from(unprefixed.to_owned())
+                        };
 
-                            if let (Ok(relative), Ok(time)) = (relative, time) {
-                                let hash = if cache.path_exists(&relative).unwrap() {
-                                    None
-                                } else {
-                                    log::debug!("Hashing {:?}", relative);
-                                    Some(Blake2bHash::from_file(entry.path()).unwrap())
-                                };
-                                ret.push((relative, time, hash));
-                            }
+                        if let (Ok(relative), Ok(time)) = (relative, time) {
+                            let hash = if cache.path_exists(&relative).unwrap() {
+                                None
+                            } else {
+                                // FIXME: unwrap
+                                let ret = Blake2bHash::from_file(entry.path()).unwrap();
+                                info!("Hashed"; slog::o!("path" => relative.as_ref(), "hash" => ret.to_string()));
+                                Some(ret)
+                            };
+                            ret.push((relative, time, hash));
                         }
                     }
-                    Ok(())
-                })
-                .collect::<Result<(), Error>>()?;
+                }
+            }
             Ok(ret)
         },
     )
@@ -130,6 +129,7 @@ impl ScanCtx {
                     let mut cache = this.cache.lock().unwrap();
                     let txn = cache.transaction().unwrap();
                     for (relative, tags) in txn_rx {
+                        info!("Cached"; slog::o!("path" => relative.as_ref()));
                         txn.insert_path_with_tags(&relative, &tags).unwrap();
                     }
                     txn.commit().map_err(Error::from)

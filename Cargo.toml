@@ -10,29 +10,33 @@ edition = "2018"
 tokio = { version = "0.2.11", features = ["rt-core", "signal", "sync", "time", "blocking", "stream", "fs", "macros"] }
 snafu = { git = "https://github.com/shepmaster/snafu", rev = "1aa2f5dd93694503b990308e48e00dc67ea2770d"}
 futures-util = "0.3.1"
-log = "0.4.8"
-env_logger = { version = "0.7.1", default-features = false, features = ["termcolor", "atty", "humantime"] }
-structopt = "0.3.5"
-walkdir = "2.2.9"
-serde = { version = "1.0.103", features = ["derive"] }
-rand = "0.7.2"
+structopt = "0.3.9"
+walkdir = "2.3.1"
+serde = { version = "1.0.104", features = ["derive"] }
+rand = "0.7.3"
 phf = { version = "0.8.0", features = ["macros"] }
-serde_json = "1.0.44"
-strum = "0.16.0"
-strum_macros = "0.16.0"
-bytes = "0.5.2"
-humantime-serde = "0.1.1"
+serde_json = "1.0.45"
+strum = "0.17.1"
+strum_macros = "0.17.1"
+bytes = "0.5.4"
+humantime-serde = "1.0.0"
 slotmap = "0.4.0"
 bitflags = "1.2.1"
 serde_yaml = "0.8.11"
 rusqlite = "0.21.0"
-tgcd = { path = "../tgcd", default-features = false }
-refinery = { git = "https://github.com/foldu/refinery", features = ["rusqlite"], rev = "2ad9b4fd872f4e30bd40420f9538aa6d0d192a56"}
+tgcd = { path = "../tgcd/tgcd", default-features = false }
+refinery = { features = ["rusqlite"], version = "0.2.0" }
 directories = "2.0.2"
-refinery-migrations = { git = "https://github.com/foldu/refinery", rev = "2ad9b4fd872f4e30bd40420f9538aa6d0d192a56"}
-inotify = "0.8.0"
-once_cell = "1.2.0"
+inotify = "0.8.2"
+once_cell = "1.3.1"
 crossbeam-channel = "0.4.0"
+chrono = "0.4.10"
+log = "0.4.8"
+slog = "2.5.2"
+slog-term = "2.5.0"
+slog-stdlog = "4.0.0"
+slog-scope = "4.3.0"
+refinery-migrations = "0.2.0"
 
 [dependencies.cfgen]
 git = "https://github.com/foldu/cfgen"
@@ -43,6 +47,3 @@ features = ["yaml", "expandpath"]
 [dependencies.oneshot-reqrep]
 git = "https://github.com/foldu/oneshot-reqrep"
 rev = "f0bd99a0db487823ce5334037520a1472bb869c0"
-
-#[profile.release]
-#debug = true

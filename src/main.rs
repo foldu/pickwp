@@ -24,6 +24,7 @@ use futures_util::{
     stream::{self, StreamExt},
 };
 use rand::prelude::*;
+use slog_scope::{debug, error, info};
 use snafu::{ResultExt, Snafu};
 use std::{collections::HashMap, io, path::Path, time::Duration};
 use structopt::StructOpt;
@@ -43,15 +44,14 @@ async fn run() -> Result<(), Error> {
 }
 
 async fn run_server() -> Result<(), Error> {
-    let commands = oneshot_reqrep::listen(ipc::SOCK_PATH, 16)?.fuse();
+    let commands = oneshot_reqrep::listen(ipc::SOCK_PATH, 16)?;
     tokio::pin!(commands);
 
     let config = config::Config::load_or_write_default().await?;
 
-    let (watch_task, config_reload) =
+    let (watch_task, mut config_reload) =
         watch_file::watch_file(&*config::CONFIG_PATH, std::time::Duration::from_secs(5)).unwrap();
-    tokio::task::spawn(watch_task);
-    let mut config_reload = config_reload.fuse();
+    task::spawn(watch_task);
 
     // FIXME: unwrap
     let (scan_ctx, mut new_wp_rx) = scan::ScanCtx::new().unwrap();
@@ -65,108 +65,104 @@ async fn run_server() -> Result<(), Error> {
         .map_err(|e| Error::FilterCreate { src: e })?;
 
     let mut storage = Storage::default();
-    storage.refresh(new_wp_rx.next().await.unwrap(), &scan_ctx.get_cache());
-    let mut new_wp_rx = new_wp_rx.fuse();
+    storage
+        .refresh(new_wp_rx.next().await.unwrap(), &scan_ctx.get_cache())
+        .context(RefreshStorage)?;
+    let mut new_wp_rx = new_wp_rx;
 
-    let (mut refresh_preempt, refresh) =
+    let (mut refresh_preempt, mut refresh) =
         preemptible_interval(Duration::from_secs(state.refresh_interval));
-    let mut refresh = refresh.fuse();
 
-    let (mut rescan_preempt, rescan) =
+    let (mut rescan_preempt, mut rescan) =
         preemptible_interval(Duration::from_secs(state.rescan_interval));
-    let mut rescan = rescan.fuse();
 
     let int = register_signal(SignalKind::interrupt())?;
     let term = register_signal(SignalKind::terminate())?;
-    let mut terminate = stream::select(int, term).fuse();
+    let mut terminate = stream::select(int, term);
 
     set_wallpapers(&mut state, &storage)?;
     loop {
         tokio::select! {
-            _ = refresh.next() => {
+            Some(_) = refresh.next() => {
                 if !state.frozen {
-                    log::info!("Refreshing");
                     set_wallpapers(&mut state, &storage)?;
                 }
             }
-            buf = config_reload.next() => {
-                let buf = buf.expect("Config reload died");
+            Some(buf) = config_reload.next() => {
                 match config::Config::load_from_buf(&buf) {
                     Ok(cfg) => {
-                        log::info!("Reloaded config");
+                        info!("Reloaded config");
                         match State::from_config(cfg, &scan_ctx.get_cache()) {
                             Ok(new_state) => {
                                 refresh_preempt.preempt().await;
                                 state = new_state;
                             }
 
-                            Err(e) => log::error!("{}", e),
+                            Err(e) => error!("Could not create new state from config"; slog::o!("source" => e.to_string())),
                         }
                     }
                     Err(e) => {
-                        log::error!("{}", e);
+                        error!("Could not load config"; slog::o!("source" => e.to_string()));
                     }
                 }
             }
-            _ = rescan.next() => {
-                log::info!("Starting rescan");
+            Some(_) = rescan.next() => {
+                info!("Starting rescan");
                 let wp_dir = state.wp_dir.clone();
                 if let Some(task) = scan_ctx.scan(wp_dir) {
                     task::spawn(task);
                 }
             }
-            new_wps = new_wp_rx.next() => {
-                if let Some(new_wps) = new_wps {
-                    let cache= scan_ctx.get_cache();
-                    storage.refresh(new_wps, &cache);
+            Some(new_wps) = new_wp_rx.next() => {
+                let cache= scan_ctx.get_cache();
+                if let Err(e) = storage.refresh(new_wps, &cache) {
+                    error!("Error refreshing storage"; slog::o!("source" => e.to_string()));
                 }
             }
-            _ = terminate.next() => {
+            Some(_) = terminate.next() => {
                 break Ok(());
             }
-            req = commands.next() => {
-                if let Some(req) = req {
-                    log::debug!("Received cmd {:#?}", req.kind());
-                    use ipc::Command::*;
-                    let rep = match req.kind() {
-                        Refresh => {
-                            refresh_preempt.preempt().await;
-                            Ok(Reply::Unit)
-                        }
-                        Rescan => {
-                            rescan_preempt.preempt().await;
-                            Ok(Reply::Unit)
-                        }
-                        Current => {
-                            Ok(Reply::Wps(state.current.clone()))
-                        }
-                        Filters { action } => {
-                            match action {
-                                None => {
-                                    Ok(Reply::Filters(state.filters.iter().map(|filter| filter.serializeable()).collect()))
-                                }
-                                Some(FilterCommand::Rm { id }) => {
-                                    if *id < state.filters.len() {
-                                        state.filters.remove(*id);
-                                        Ok(Reply::Unit)
-                                    } else {
-                                        Err(format!("No filter with id {}", id))
-                                    }
-                                }
-                                Some(FilterCommand::Add { filters }) => {
-                                    state.filters.extend(filters.into_iter().map(|filter| filter.clone().into()));
+            Some(req) = commands.next() => {
+                debug!("Received cmd"; slog::o!("kind" => format!("{:#?}", req.kind())));
+                use ipc::Command::*;
+                let rep = match req.kind() {
+                    Refresh => {
+                        refresh_preempt.preempt().await;
+                        Ok(Reply::Unit)
+                    }
+                    Rescan => {
+                        rescan_preempt.preempt().await;
+                        Ok(Reply::Unit)
+                    }
+                    Current => {
+                        Ok(Reply::Wps(state.current.clone()))
+                    }
+                    Filters { action } => {
+                        match action {
+                            None => {
+                                Ok(Reply::Filters(state.filters.iter().map(|filter| filter.serializeable()).collect()))
+                            }
+                            Some(FilterCommand::Rm { id }) => {
+                                if *id < state.filters.len() {
+                                    state.filters.remove(*id);
                                     Ok(Reply::Unit)
+                                } else {
+                                    Err(format!("No filter with id {}", id))
                                 }
                             }
+                            Some(FilterCommand::Add { filters }) => {
+                                state.filters.extend(filters.into_iter().map(|filter| filter.clone().into()));
+                                Ok(Reply::Unit)
+                            }
                         }
-                        ToggleFreeze => {
-                            state.frozen = !state.frozen;
-                            Ok(Reply::FreezeStatus(state.frozen))
-                        }
-                    };
+                    }
+                    ToggleFreeze => {
+                        state.frozen = !state.frozen;
+                        Ok(Reply::FreezeStatus(state.frozen))
+                    }
+                };
 
-                    try_or_err!(req.reply(&rep).await);
-                }
+                try_or_err!(req.reply(&rep).await);
             }
         }
     }
@@ -262,6 +258,14 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
             None
         };
 
+        match &path {
+            Some(path) => {
+                info!("Set wp"; slog::b!("screen" => &screen, "path" => &path));
+            }
+            None => {
+                info!("No wp found"; slog::b!("screen" => &screen));
+            }
+        }
         state.current.insert(screen, path);
     }
 
@@ -289,14 +293,23 @@ enum Error {
 
     #[snafu(display("Can't create filter: {}", src))]
     FilterCreate { src: filter::FilterCreateError },
+
+    #[snafu(display("Could not refresh storage: {}", source))]
+    RefreshStorage { source: cache::Error },
 }
 
 fn main() {
-    let log = "RUST_LOG";
-    if let Err(_) = std::env::var(log) {
-        std::env::set_var("RUST_LOG", "pickwp=info");
-    }
-    env_logger::init();
+    use slog::Drain;
+    let decorator = slog_term::TermDecorator::new().build();
+    let drain = std::sync::Mutex::new(slog_term::FullFormat::new(decorator).build())
+        .filter_level(slog::Level::Info)
+        .fuse();
+
+    let logger = slog::Logger::root(drain, slog::o!());
+
+    let _scope_guard = slog_scope::set_global_logger(logger);
+    let _log_guard = slog_stdlog::init().unwrap();
+
     let mut rt = tokio::runtime::Builder::new()
         .basic_scheduler()
         .enable_io()
@@ -306,7 +319,7 @@ fn main() {
         .unwrap();
 
     if let Err(e) = rt.block_on(run()) {
-        eprintln!("{}", e);
+        slog_scope::crit!("{}", e);
         std::process::exit(1);
     }
 }

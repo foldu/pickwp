@@ -70,8 +70,6 @@ impl Storage {
             }
         }
 
-        println!("{:#?}", unvisited);
-
         for key in unvisited {
             self.times.remove(key);
             self.tags.remove(key);

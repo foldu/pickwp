@@ -35,7 +35,7 @@ impl FilterCreateError {
 pub trait Filter {
     fn after_wp_refresh(&mut self, _: &[FileKey]) {}
 
-    fn read_ctx(&self, cache: &Cache) -> Result<Option<Box<dyn Filter>>, FilterCreateError> {
+    fn read_ctx(&self, _cache: &Cache) -> Result<Option<Box<dyn Filter>>, FilterCreateError> {
         Ok(None)
     }
 
