@@ -24,7 +24,7 @@ slotmap = "0.4.0"
 bitflags = "1.2.1"
 serde_yaml = "0.8.11"
 rusqlite = "0.21.0"
-tgcd = { path = "../tgcd/tgcd", default-features = false }
+tgcd = { git = "https://github.com/foldu/tgcd", rev = "42c379559cc7e9c9495dccab05364cbc006d583f", default-features = false }
 refinery = { features = ["rusqlite"], version = "0.2.0" }
 directories = "2.0.2"
 inotify = "0.8.2"
