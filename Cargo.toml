@@ -40,9 +40,9 @@ refinery-migrations = "0.2.0"
 
 [dependencies.cfgen]
 git = "https://github.com/foldu/cfgen"
-rev = "6cafcff155e0c760d046e73c8982c003b2615043"
+rev = "11dfd3e9c17a86a8888979a2d752b4d8a8d30b71"
 default-features = false
-features = ["yaml", "expandpath"]
+features = ["yaml"]
 
 [dependencies.oneshot-reqrep]
 git = "https://github.com/foldu/oneshot-reqrep"
