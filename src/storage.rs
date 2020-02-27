@@ -2,7 +2,6 @@ use crate::{
     cache::{self, Cache},
     util::PathBufExt,
 };
-use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use snafu::Snafu;
@@ -17,14 +16,6 @@ use std::{
 
 new_key_type! {
     pub struct FileKey;
-}
-
-bitflags! {
-    pub struct StorageFlags: u8 {
-        const NONE = 0;
-        const RELAPATH = 1 << 0;
-        const FILETIME = 1 << 1;
-    }
 }
 
 pub struct Storage {

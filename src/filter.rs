@@ -1,7 +1,7 @@
 use crate::{
     cache::{self, Cache},
     config,
-    storage::{FileKey, Storage, StorageFlags, TimeKind},
+    storage::{FileKey, Storage, TimeKind},
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, time::SystemTime};
@@ -40,10 +40,6 @@ pub trait Filter {
     }
 
     fn is_ok(&mut self, id: FileKey, storage: &Storage) -> bool;
-
-    fn needed_storages(&self) -> StorageFlags {
-        StorageFlags::NONE
-    }
 
     fn serializeable(&self) -> config::Filter;
 }
@@ -94,10 +90,6 @@ pub struct TimeFilter {
 }
 
 impl Filter for TimeFilter {
-    fn needed_storages(&self) -> StorageFlags {
-        StorageFlags::FILETIME
-    }
-
     fn is_ok(&mut self, id: FileKey, storage: &Storage) -> bool {
         let time = storage.times.get(id).unwrap().select(self.time_kind);
 
@@ -121,10 +113,6 @@ pub struct FilenameFilter {
 }
 
 impl Filter for FilenameFilter {
-    fn needed_storages(&self) -> StorageFlags {
-        StorageFlags::RELAPATH
-    }
-
     fn is_ok(&mut self, id: FileKey, storage: &Storage) -> bool {
         let path = storage.relative_paths.get(id).unwrap();
         path.contains(&self.contains)

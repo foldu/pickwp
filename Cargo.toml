@@ -21,7 +21,6 @@ strum_macros = "0.17.1"
 bytes = "0.5.4"
 humantime-serde = "1.0.0"
 slotmap = "0.4.0"
-bitflags = "1.2.1"
 serde_yaml = "0.8.11"
 rusqlite = "0.21.0"
 tgcd = { git = "https://github.com/foldu/tgcd", rev = "42c379559cc7e9c9495dccab05364cbc006d583f", default-features = false }
