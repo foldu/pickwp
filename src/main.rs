@@ -80,12 +80,14 @@ async fn run_server() -> Result<(), Error> {
     let term = register_signal(SignalKind::terminate())?;
     let mut terminate = stream::select(int, term);
 
-    set_wallpapers(&mut state, &storage).await?;
+    refresh_preempt.preempt().await;
     loop {
         tokio::select! {
             Some(_) = refresh.next() => {
                 if !state.frozen {
-                    set_wallpapers(&mut state, &storage).await?;
+                    if let Err(e) = set_wallpapers(&mut state, &storage).await {
+                        error!("{}", e);
+                    }
                 }
             }
             Some(buf) = config_reload.next() => {

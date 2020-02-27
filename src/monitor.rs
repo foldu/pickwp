@@ -1,6 +1,5 @@
 use crate::config;
 use serde::Deserialize;
-use snafu::{ Snafu};
 use tokio_i3ipc::I3;
 
 #[derive(Deserialize, Copy, Debug, Clone)]
@@ -33,17 +32,15 @@ impl Sway {
         match self.0 {
             Some(ref mut cxn) => Ok(cxn),
             None => {
-                let cxn = I3::connect().await.map_err(|source| Error::Generic {
-                    source: source.into(),
-                })?;
-                self.0.replace(cxn);
+                let cxn = I3::connect().await.map_err(Error::new)?;
+                self.0 = Some(cxn);
                 Ok(self.0.as_mut().unwrap())
             }
         }
     }
 }
 
-macro_rules! cut_cxn_if {
+macro_rules! cut_cxn_on_err {
     ($this:expr, $ret:expr) => {
         match $ret {
             Ok(ret) => Ok(ret),
@@ -59,11 +56,11 @@ macro_rules! cut_cxn_if {
 impl Monitor for Sway {
     async fn idents(&mut self) -> Result<Vec<String>, Error> {
         let cxn = self.get_cxn().await?;
-        cut_cxn_if!(
+        cut_cxn_on_err!(
             self,
             cxn.get_outputs()
                 .await
-                .map_err(|e| Error::Generic { source: e.into() })
+                .map_err(Error::new)
                 .map(|out| out.into_iter().map(|out| out.name).collect())
         )
     }
@@ -77,40 +74,39 @@ impl Monitor for Sway {
 
         let cmd = format!(r#"output {} background "{}" {}"#, ident, path, mode);
 
-        cut_cxn_if!(
+        cut_cxn_on_err!(
             self,
             cxn.run_command(&cmd)
                 .await
-                .map_err(|e| Error::Generic { source: e.into() })
+                .map_err(Error::new)
                 .and_then(|ret| {
                     let ret = &ret[0];
                     if ret.success {
                         Ok(())
                     } else {
-                        Err(Error::Generic {
-                            source: match &ret.error {
-                                Some(e) => format!("Can't set wallpaper: {}", e).into(),
-                                None => format!("Can't set wallpaper").into(),
-                            },
-                        })
+                        Err(Error::new(match &ret.error {
+                            Some(e) => format!("Can't set wallpaper: {}", e),
+                            None => format!("Can't set wallpaper"),
+                        }))
                     }
                 })
         )
     }
 }
 
-#[derive(Snafu, Debug)]
-pub enum Error {
-    #[snafu(display("{}", source))]
-    Generic { source: Box<dyn std::error::Error> },
+#[derive(Debug)]
+pub struct Error(Box<dyn std::error::Error>);
 
-    #[snafu(display("Can't get screens: {}", source))]
-    GetScreens { source: Box<dyn std::error::Error> },
+impl Error {
+    fn new(e: impl Into<Box<dyn std::error::Error>>) -> Self {
+        Self(e.into())
+    }
+}
 
-    #[snafu(display("Can't set wallpaper {} for {}: {}", path, ident, source))]
-    SetWallpaper {
-        source: Box<dyn std::error::Error>,
-        path: String,
-        ident: String,
-    },
+impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
 }
