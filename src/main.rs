@@ -80,12 +80,12 @@ async fn run_server() -> Result<(), Error> {
     let term = register_signal(SignalKind::terminate())?;
     let mut terminate = stream::select(int, term);
 
-    set_wallpapers(&mut state, &storage)?;
+    set_wallpapers(&mut state, &storage).await?;
     loop {
         tokio::select! {
             Some(_) = refresh.next() => {
                 if !state.frozen {
-                    set_wallpapers(&mut state, &storage)?;
+                    set_wallpapers(&mut state, &storage).await?;
                 }
             }
             Some(buf) = config_reload.next() => {
@@ -227,7 +227,7 @@ fn register_signal(kind: SignalKind) -> Result<Signal, Error> {
     signal(kind).context(RegisterSignal)
 }
 
-fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
+async fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
     let mut rng = rand::thread_rng();
 
     let filtered = storage
@@ -242,7 +242,7 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
 
     let mut new = Vec::new();
     state.current.clear();
-    let screens = state.monitor.idents()?;
+    let screens = state.monitor.idents().await?;
     for screen in screens {
         let path = if let Some(pick) = filtered.choose(&mut rng) {
             new.push(*pick);
@@ -251,7 +251,10 @@ fn set_wallpapers(state: &mut State, storage: &Storage) -> Result<(), Error> {
                 .into_string()
                 .unwrap();
 
-            state.monitor.set_wallpaper(state.mode, &screen, &path)?;
+            state
+                .monitor
+                .set_wallpaper(state.mode, &screen, &path)
+                .await?;
 
             Some(path)
         } else {
