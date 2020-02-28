@@ -19,6 +19,8 @@ jobs:
             os: ubuntu-18.04
             rust: stable
     steps:
+      - name: Install dependencies
+        run: sudo apt-get install -y sqlite
       - name: Checkout repository
         uses: actions/checkout@v1
         with:
