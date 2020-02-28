@@ -1,6 +1,7 @@
 #![recursion_limit = "1024"]
 
 mod cache;
+mod cli;
 mod client;
 mod config;
 mod filter;
@@ -13,8 +14,9 @@ mod util;
 mod watch_file;
 
 use crate::{
+    cli::{FilterCommand, Opt},
     filter::Filter,
-    ipc::{FilterCommand, Reply},
+    ipc::Reply,
     monitor::{Mode, Monitor},
     storage::Storage,
     util::{preemptible_interval, PathBufExt},
@@ -126,7 +128,7 @@ async fn run_server() -> Result<(), Error> {
             }
             Some(req) = commands.next() => {
                 debug!("Received cmd"; slog::o!("kind" => format!("{:#?}", req.kind())));
-                use ipc::Command::*;
+                use cli::Command::*;
                 let rep = match req.kind() {
                     Refresh => {
                         refresh_preempt.preempt().await;
@@ -152,10 +154,10 @@ async fn run_server() -> Result<(), Error> {
                                     Err(format!("No filter with id {}", id))
                                 }
                             }
-                            Some(FilterCommand::Add { filters }) => {
-                                state.filters.extend(filters.into_iter().map(|filter| filter.clone().into()));
-                                Ok(Reply::Unit)
-                            }
+                            //Some(FilterCommand::Add { filters }) => {
+                            //    state.filters.extend(filters.into_iter().map(|filter| filter.clone().into()));
+                            //    Ok(Reply::Unit)
+                            //}
                         }
                     }
                     ToggleFreeze => {
@@ -208,21 +210,6 @@ impl State {
             monitor: config.backend.into(),
         })
     }
-}
-
-#[derive(StructOpt, Debug)]
-struct Opt {
-    #[structopt(subcommand)]
-    cmd: Option<ipc::Command>,
-    #[structopt(flatten)]
-    cmd_config: CmdConfig,
-}
-
-#[derive(StructOpt, Debug)]
-pub struct CmdConfig {
-    /// Format output in json
-    #[structopt(short, long)]
-    json: bool,
 }
 
 fn register_signal(kind: SignalKind) -> Result<Signal, Error> {

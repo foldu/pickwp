@@ -48,3 +48,7 @@ features = ["yaml"]
 [dependencies.oneshot-reqrep]
 git = "https://github.com/foldu/oneshot-reqrep"
 rev = "f0bd99a0db487823ce5334037520a1472bb869c0"
+
+[build-dependencies]
+serde = "1.0.104"
+structopt = "0.3.9"

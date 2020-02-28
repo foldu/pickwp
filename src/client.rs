@@ -1,7 +1,7 @@
 use crate::{
+    cli::{CmdConfig, Command},
     config,
-    ipc::{Command, Reply, SOCK_PATH},
-    CmdConfig,
+    ipc::{Reply, SOCK_PATH},
 };
 use oneshot_reqrep::send_request;
 use serde::{Deserialize, Serialize};
