@@ -41,7 +41,7 @@ async-trait = "0.1.24"
 
 [dependencies.cfgen]
 git = "https://github.com/foldu/cfgen"
-rev = "11dfd3e9c17a86a8888979a2d752b4d8a8d30b71"
+rev = "eccf05b15e0e25503b59b6a6ab0bf7483727bd6c"
 default-features = false
 features = ["yaml"]
 
