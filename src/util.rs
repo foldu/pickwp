@@ -1,8 +1,8 @@
-use std::time::Duration;
 use futures_util::{
     future,
     stream::{Stream, StreamExt},
 };
+use std::time::Duration;
 use tokio::{sync::mpsc, task, time};
 
 pub trait PathBufExt {

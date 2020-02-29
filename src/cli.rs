@@ -46,4 +46,3 @@ pub enum FilterCommand {
     //    filters: Vec<config::Filter>,
     //},
 }
-
