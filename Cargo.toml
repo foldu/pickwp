@@ -16,7 +16,7 @@ serde = { version = "1.0.104", features = ["derive"] }
 rand = "0.7.3"
 phf = { version = "0.8.0", features = ["macros"] }
 serde_json = "1.0.45"
-strum = "0.17.1"
+strum = "0.18.0"
 strum_macros = "0.17.1"
 bytes = "0.5.4"
 humantime-serde = "1.0.0"
