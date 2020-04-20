@@ -22,7 +22,7 @@ bytes = "0.5.4"
 humantime-serde = "1.0.0"
 slotmap = "0.4.0"
 serde_yaml = "0.8.11"
-rusqlite = "0.21.0"
+rusqlite = "0.22.0"
 tgcd = { git = "https://github.com/foldu/tgcd", rev = "267f03adb3b39031f0c02ce7920228189004591b", default-features = false }
 refinery = { features = ["rusqlite"], version = "0.2.0" }
 directories = "2.0.2"
