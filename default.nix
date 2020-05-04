@@ -25,7 +25,7 @@ naersk.buildPackage {
     sqlite3 db/db.sqlite -init ./sql/schema.sql .exit
   '';
   DATABASE_URL = "sqlite://db/db.sqlite";
-  PROTOC = "${pkgs.protobuf}/bin/protoc";
+  PROTOC = "${protobuf}/bin/protoc";
   postInstall = ''
     installShellCompletion target/release/build/pickwp-*/out/pickwp.{fish,bash}
     installShellCompletion --zsh target/release/build/pickwp-*/out/_pickwp
