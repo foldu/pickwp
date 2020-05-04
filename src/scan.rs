@@ -1,176 +1,167 @@
 use crate::{
-    cache::{self, Cache},
-    storage::{RelativePath, Time},
+    data::{PathData, RelativePath, Time},
+    db,
 };
-use slog_scope::info;
-use snafu::ResultExt;
-use std::{
-    convert::TryFrom,
-    future::Future,
-    os::unix::prelude::*,
+use futures_util::stream::{Stream, StreamExt};
+use sqlx::SqlitePool;
+use std::{convert::TryFrom, path::PathBuf, sync::Arc};
+use tokio::{
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-        Mutex as StdMutex,
+        mpsc::{self, error::TrySendError},
+        Mutex,
     },
+    task,
 };
-use tgcd::Blake2bHash;
-use tokio::{sync::mpsc, task};
-use walkdir::{DirEntry, WalkDir};
 
-struct CtxInner {
-    cache: StdMutex<Cache>,
-    is_running: AtomicBool,
+pub struct ImageScanner {
+    // uses tokio mutex instead of std mutex even if not using async capabilities because
+    // std uses the suboptimal POSIX mutexen
+    scanning: Arc<Mutex<()>>,
 }
 
-pub struct ScanCtx {
-    // this thing will only get locked in a blocking thread so just use the normal std mutex
-    inner: Arc<CtxInner>,
-    tx: mpsc::Sender<Vec<(RelativePath, Time)>>,
-}
+fn scan(root: PathBuf) -> tokio::sync::mpsc::Receiver<(PathBuf, PathData)> {
+    let (mut tx, rx) = mpsc::channel(1);
+    task::spawn_blocking(move || {
+        for ent in walkdir::WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|ent| ent.ok())
+            .filter(|ent| ent.file_type().is_file())
+        {
+            if let Ok(stat) = ent.metadata() {
+                let absolute = ent.into_path();
+                let relative =
+                    RelativePath::try_from(absolute.strip_prefix(&root).unwrap().to_owned())
+                        .unwrap();
+                let data = PathData {
+                    path: relative,
+                    time: Time {
+                        mtime: stat.modified().unwrap().into(),
+                        btime: stat.created().ok().map(|time| time.into()),
+                    },
+                };
+                let mut to_send = (absolute, data);
 
-#[derive(snafu::Snafu, Debug)]
-pub enum Error {
-    #[snafu(display("{}", source))]
-    CacheOpen { source: cache::Error },
-
-    #[snafu(display("{}", source))]
-    #[snafu(context(false))]
-    CacheErr { source: cache::Error },
-
-    #[snafu(display("{}", source))]
-    #[snafu(context(false))]
-    TgcdConnect { source: tgcd::Error },
-}
-
-async fn scan_dir(
-    ctx: Arc<CtxInner>,
-    dir: String,
-) -> Result<Vec<(RelativePath, Time, Option<Blake2bHash>)>, Error> {
-    task::spawn_blocking(
-        move || -> Result<Vec<(RelativePath, Time, Option<Blake2bHash>)>, Error> {
-            let cache = ctx.cache.lock().unwrap();
-            let mut ret = Vec::new();
-            for entry in WalkDir::new(&dir) {
-                if let Ok(entry) = entry {
-                    let is_image = is_image(&entry);
-                    if is_image {
-                        let time = entry.metadata().map(|meta| Time::from_meta(&meta));
-                        let relative = {
-                            let unprefixed = entry.path().strip_prefix(&dir).unwrap();
-                            RelativePath::try_from(unprefixed.to_owned())
-                        };
-
-                        if let (Ok(relative), Ok(time)) = (relative, time) {
-                            let hash = if cache.path_exists(&relative).unwrap() {
-                                None
-                            } else {
-                                // FIXME: unwrap
-                                let ret = Blake2bHash::from_file(entry.path()).unwrap();
-                                info!("Hashed"; slog::o!("path" => relative.as_ref(), "hash" => ret.to_string()));
-                                Some(ret)
-                            };
-                            ret.push((relative, time, hash));
+                loop {
+                    match tx.try_send(to_send) {
+                        Ok(_) => break,
+                        Err(TrySendError::Full(a)) => {
+                            to_send = a;
+                            slog_scope::debug!("Scan channel buffer full");
+                            std::thread::sleep(std::time::Duration::from_millis(5));
                         }
+                        Err(TrySendError::Closed(_)) => return,
                     }
                 }
             }
-            Ok(ret)
-        },
-    )
-    .await
-    .unwrap()
+        }
+    });
+
+    rx
 }
 
-struct RunGuard<'a>(&'a AtomicBool);
-
-impl<'a> RunGuard<'a> {
-    pub fn new(a: &'a AtomicBool) -> Self {
-        a.store(true, Ordering::SeqCst);
-        Self(a)
-    }
+struct CpuJobSet<T> {
+    tx: Option<tokio::sync::mpsc::Sender<T>>,
 }
 
-impl<'a> Drop for RunGuard<'a> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
-    }
-}
-
-impl ScanCtx {
-    pub fn new() -> Result<(Self, mpsc::Receiver<Vec<(RelativePath, Time)>>), Error> {
-        let (tx, rx) = mpsc::channel(1);
-        let inner = Arc::new(CtxInner {
-            cache: StdMutex::new(Cache::open().context(CacheOpen)?),
-            is_running: AtomicBool::new(false),
-        });
-
-        Ok((Self { tx, inner }, rx))
+impl<T> CpuJobSet<T>
+where
+    T: Send + 'static,
+{
+    fn buffered(bufsiz: usize) -> (Self, impl Stream<Item = T>) {
+        let (tx, rx) = tokio::sync::mpsc::channel(bufsiz);
+        (Self { tx: Some(tx) }, rx)
     }
 
-    pub fn scan(&self, dir: String) -> Option<impl Future<Output = Result<(), Error>>> {
-        if self.inner.is_running.load(Ordering::SeqCst) {
-            None
-        } else {
-            // TODO: use the "threaded" scheduler which doesn't actually mean multithreaded
-            // but work stealing
-            let this = self.inner.clone();
-            let mut tx = self.tx.clone();
-            Some(async move {
-                let _ = RunGuard::new(&this.is_running);
-                let mut tgcd = tgcd::TgcdClient::from_global_config().await?;
-
-                let scan_res = scan_dir(this.clone(), dir).await?;
-
-                let this = this.clone();
-                let (txn_tx, txn_rx) =
-                    crossbeam_channel::unbounded::<(RelativePath, Vec<tgcd::Tag>)>();
-                let txn_task = task::spawn_blocking(move || {
-                    let mut cache = this.cache.lock().unwrap();
-                    let txn = cache.transaction().unwrap();
-                    for (relative, tags) in txn_rx {
-                        info!("Cached"; slog::o!("path" => relative.as_ref()));
-                        txn.insert_path_with_tags(&relative, &tags).unwrap();
+    fn execute(&self, f: impl FnOnce() -> T + Send + 'static) {
+        let mut tx = self.tx.as_ref().unwrap().clone();
+        rayon::spawn(move || {
+            let mut ret = f();
+            loop {
+                match tx.try_send(ret) {
+                    Ok(_) => break,
+                    Err(TrySendError::Full(a)) => {
+                        ret = a;
+                        slog_scope::debug!("Jobset buffer full");
+                        std::thread::sleep(std::time::Duration::from_millis(5));
                     }
-                    txn.commit().map_err(Error::from)
-                });
-
-                let mut ret = Vec::with_capacity(scan_res.len());
-                for (relative, time, hash) in scan_res {
-                    if let Some(hash) = hash {
-                        let tags = tgcd.get_tags(&hash).await?;
-                        txn_tx.send((relative.clone(), tags)).unwrap();
-                    }
-                    ret.push((relative, time));
+                    Err(TrySendError::Closed(_)) => return,
                 }
-                drop(txn_tx);
+            }
+        })
+    }
 
-                txn_task.await.unwrap()?;
+    fn stop(&mut self) {
+        self.tx = None;
+    }
+}
 
-                tx.send(ret).await.unwrap();
-
-                Ok(())
-            })
+impl ImageScanner {
+    pub fn new() -> Self {
+        Self {
+            scanning: Default::default(),
         }
     }
 
-    pub fn get_cache(&self) -> std::sync::MutexGuard<Cache> {
-        self.inner.cache.lock().unwrap()
+    pub fn start_scan(&mut self, pool: &SqlitePool, root: PathBuf) {
+        let pool = pool.clone();
+        let scanning = self.scanning.clone();
+        let task = task::spawn(async move {
+            if let Ok(_) = scanning.try_lock() {
+                slog_scope::debug!("Starting scan");
+                let mut scan = scan(root);
+                let (mut spawner, mut hash_jobs) = CpuJobSet::buffered(32);
+                let mut tgcd = tgcd::TgcdClient::from_global_config().await.unwrap();
+
+                let mut txn = pool.begin().await.unwrap();
+
+                let mut scan_done = false;
+                loop {
+                    tokio::select! {
+                        next = scan.next(), if !scan_done => {
+                            match next {
+                                Some((absolute, path_data)) => {
+                                    match db::fetch_path_time(&mut txn, &path_data.path).await? {
+                                        Some(time) if time == path_data.time => (),
+                                        Some(time) => {
+                                            slog_scope::info!("Updating meta of {}", path_data.path.as_ref());
+                                            db::update_timestamp(&mut txn, &PathData { time, ..path_data }).await?;
+
+                                        }
+                                        None => {
+                                            spawner.execute(move || -> Result<_, std::io::Error> {
+                                                let hash = tgcd::Blake2bHash::from_file(absolute)?;
+                                                Ok((path_data, hash))
+                                            });
+                                        }
+                                    }
+                                }
+                                None => {
+                                    scan_done = true;
+                                    spawner.stop();
+                                }
+                            }
+                        }
+                        Some(hashed) = hash_jobs.next() => {
+                            if let Ok((path_data, hash)) = hashed {
+                                let tags = tgcd.get_tags(&hash).await.unwrap();
+                                slog_scope::info!("Found new file: {}", path_data.path.as_ref());
+                                db::insert_new_path(&mut txn, &path_data, &tags).await?;
+                            }
+                        }
+                        else => break,
+                    }
+                }
+
+                txn.commit().await?;
+            };
+            Ok(())
+        });
+
+        task::spawn(async move {
+            if let Err(e) = task.await.unwrap() {
+                let e: anyhow::Error = e;
+                slog_scope::error!("{}", e);
+            }
+        });
     }
-}
-
-fn is_image(ent: &DirEntry) -> bool {
-    static IMAGE_EXTENSIONS: phf::Set<&'static [u8]> = phf::phf_set! {
-        b"jpe",
-        b"jpeg",
-        b"jpg",
-        b"png",
-    };
-
-    ent.file_type().is_file()
-        && ent
-            .path()
-            .extension()
-            .map(|ext| IMAGE_EXTENSIONS.contains(ext.as_bytes()))
-            .unwrap_or(false)
 }

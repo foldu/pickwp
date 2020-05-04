@@ -1,70 +1,36 @@
-use crate::{
-    cli::{CmdConfig, Command},
-    config,
-    ipc::{Reply, SOCK_PATH},
-};
-use oneshot_reqrep::send_request;
-use serde::{Deserialize, Serialize};
+use crate::{cli::Cmd, rpc};
 
-enum Formatter {
-    Json,
-    Yaml,
-}
-
-impl Formatter {
-    fn print<T>(&self, t: &T)
-    where
-        T: Serialize,
-    {
-        let s = match self {
-            Formatter::Json => serde_json::to_string_pretty(t).expect("Can't deserialize to json"),
-            Formatter::Yaml => serde_yaml::to_string(t).expect("Can't deserialize to yaml"),
-        };
-
-        println!("{}", s);
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct FilterWithId {
-    id: usize,
-    #[serde(flatten)]
-    filter: config::Filter,
-}
-
-#[derive(Serialize)]
-struct Freeze {
-    frozen: bool,
-}
-
-pub async fn run(cmd: Command, cmd_config: CmdConfig) -> Result<(), oneshot_reqrep::Error> {
-    let formatter = if cmd_config.json {
-        Formatter::Json
-    } else {
-        Formatter::Yaml
-    };
-
-    match send_request(SOCK_PATH, cmd).await? {
-        Ok(Reply::FreezeStatus(frozen)) => {
-            formatter.print(&Freeze { frozen });
+pub async fn run(cmd: Cmd) -> Result<(), anyhow::Error> {
+    let app_paths = crate::util::AppPaths::get().unwrap();
+    let mut client = rpc::connect(app_paths.rt_dir).await?;
+    let ctx = tarpc::context::current();
+    match cmd {
+        Cmd::Rescan => {
+            client.scan(ctx).await?;
         }
-        Ok(Reply::Wps(wps)) => {
-            formatter.print(&wps);
+        Cmd::Refresh => {
+            client.refresh(ctx).await?;
         }
-        Ok(Reply::Filters(filters)) => {
-            let filters: Vec<FilterWithId> = filters
-                .into_iter()
-                .enumerate()
-                .map(|(i, filter)| FilterWithId { id: i, filter })
-                .collect();
-            formatter.print(&filters);
+        Cmd::Current => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&client.get_wallpapers(ctx).await?).unwrap()
+            );
         }
-        Ok(Reply::Unit) => {}
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+        Cmd::ToggleFreeze => {
+            #[derive(serde::Serialize)]
+            struct ToggleFreezeOutput {
+                frozen: bool,
+            }
+
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ToggleFreezeOutput {
+                    frozen: client.toggle_freeze(ctx).await?
+                })
+                .unwrap()
+            );
         }
     }
-
     Ok(())
 }

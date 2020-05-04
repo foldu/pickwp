@@ -1,4 +1,3 @@
-use crate::config;
 use serde::Deserialize;
 use tokio_i3ipc::I3;
 
@@ -6,7 +5,6 @@ use tokio_i3ipc::I3;
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {
     Fill,
-
     Tile,
 }
 
@@ -14,14 +12,6 @@ pub enum Mode {
 pub trait Monitor {
     async fn idents(&mut self) -> Result<Vec<String>, Error>;
     async fn set_wallpaper(&mut self, mode: Mode, ident: &str, path: &str) -> Result<(), Error>;
-}
-
-impl From<config::Backend> for Box<dyn Monitor> {
-    fn from(other: config::Backend) -> Self {
-        match other {
-            config::Backend::Sway => Box::new(Sway::default()),
-        }
-    }
 }
 
 #[derive(Default)]
@@ -72,6 +62,7 @@ impl Monitor for Sway {
             Mode::Tile => "tile",
         };
 
+        // FIXME: escaping
         let cmd = format!(r#"output {} background "{}" {}"#, ident, path, mode);
 
         cut_cxn_on_err!(
@@ -95,10 +86,10 @@ impl Monitor for Sway {
 }
 
 #[derive(Debug)]
-pub struct Error(Box<dyn std::error::Error>);
+pub struct Error(Box<dyn std::error::Error + Sync + Send>);
 
 impl Error {
-    fn new(e: impl Into<Box<dyn std::error::Error>>) -> Self {
+    fn new(e: impl Into<Box<dyn std::error::Error + Sync + Send>>) -> Self {
         Self(e.into())
     }
 }

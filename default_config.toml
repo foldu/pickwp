@@ -1,0 +1,10 @@
+wp-dir = "/FIXME:"
+mode = "fill"
+rescan-interval = "5m"
+refresh-interval = "5m"
+
+[filter]
+last-shown = true
+tags = []
+from-time = "2020-01-20 00:00:00"
+to-time = "2020-01-30 00:00:00"

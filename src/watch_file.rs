@@ -35,7 +35,34 @@ async fn watch(
     panic!("inotify stream stopped for some reason")
 }
 
-pub fn watch_file(
+pub struct FileWatcher {
+    retry_delay: Duration,
+}
+
+impl Default for FileWatcher {
+    fn default() -> Self {
+        Self {
+            retry_delay: Duration::from_secs(5),
+        }
+    }
+}
+
+impl FileWatcher {
+    pub fn watch(
+        self,
+        path: impl AsRef<Path>,
+    ) -> Result<
+        (
+            impl Future<Output = Result<(), std::io::Error>>,
+            impl Stream<Item = Vec<u8>>,
+        ),
+        std::io::Error,
+    > {
+        watch_file(path, self.retry_delay)
+    }
+}
+
+fn watch_file(
     path: impl AsRef<Path>,
     retry_delay: Duration,
 ) -> Result<
@@ -52,6 +79,7 @@ pub fn watch_file(
         let mut buf = vec![0; 4 * (1 << 10)];
         let parent = path.parent().unwrap();
         loop {
+            slog_scope::info!("Starting watch loop");
             match inotify.add_watch(parent, WatchMask::CLOSE_WRITE | WatchMask::DELETE_SELF) {
                 Ok(desc) => {
                     match watch(&mut inotify, &mut buf, &mut tx, &path).await {
