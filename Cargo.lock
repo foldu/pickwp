@@ -1013,7 +1013,7 @@ dependencies = [
  "structopt",
  "tarpc",
  "tgcd",
- "time 0.2.14",
+ "time 0.2.15",
  "tokio",
  "tokio-i3ipc",
  "tokio-serde",
@@ -1825,9 +1825,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.2.14"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c19b581e837b3f1a6a211e1d30f11a2da711cc8f6d38c16972eecc0398114446"
+checksum = "e1330829d2e6c06771eeae476be12ff1aa9eb5e29ca718a431ab27168efde6c1"
 dependencies = [
  "cfg-if",
  "libc",

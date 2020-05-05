@@ -35,7 +35,7 @@ tokio-serde = { version = "0.6.1", default-features = false, features = ["json"]
 pin-project = "0.4.8"
 async-trait = "0.1.30"
 toml = "0.5.6"
-time = "0.2.9"
+time = "0.2.15"
 serde_json = "1.0.51"
 
 [build-dependencies]
