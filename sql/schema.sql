@@ -1,9 +1,16 @@
+CREATE TABLE root (
+    id INTEGER PRIMARY KEY,
+    root_path TEXT UNIQUE NOT NULL
+);
+
 CREATE TABLE relative_path (
     id INTEGER PRIMARY KEY,
-    file_path TEXT NOT NULL UNIQUE,
+    root_id INTEGER REFERENCES root(id) NOT NULL,
+    file_path TEXT NOT NULL,
     unix_mtime INTEGER NOT NULL,
     -- not every file system supports btime
-    unix_btime INTEGER
+    unix_btime INTEGER,
+    UNIQUE (root_id, file_path)
 );
 
 CREATE TABLE tag (

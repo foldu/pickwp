@@ -1,6 +1,6 @@
 use crate::{
     cfg::Config,
-    db,
+    db::{self, RootData},
     monitor::Monitor,
     rpc,
     scan::ImageScanner,
@@ -56,6 +56,14 @@ pub async fn run() -> Result<(), Error> {
     let mut mon: Box<dyn Monitor> = Box::new(crate::monitor::Sway::default());
 
     loop {
+        let root = {
+            // FIXME: this doesn't work if scan is running
+            let mut cxn = pool.acquire().await.unwrap();
+            db::get_or_insert_root(&mut cxn, cfg.wp_dir.clone()).await?
+        };
+
+        image_scanner.abort_if_root_differs(root.id()).await;
+
         let loop_ = ControlLoop {
             cfg_reload: &mut cfg_reload,
             terminate: &mut term,
@@ -64,6 +72,7 @@ pub async fn run() -> Result<(), Error> {
             cfg: &cfg,
             state: &state,
             mon: &mut *mon,
+            root,
         };
 
         slog_scope::debug!("Starting event loop");
@@ -82,16 +91,8 @@ pub async fn run() -> Result<(), Error> {
     }
 }
 
-// FIXME: thar be deadlock in the air
-#[derive(Default, Clone)]
+#[derive(Default, Clone, derive_more::Deref)]
 pub struct State(Arc<Mutex<Option<StateInner>>>);
-
-impl std::ops::Deref for State {
-    type Target = Mutex<Option<StateInner>>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 impl State {
     pub async fn store(&self, inner: StateInner) {
@@ -130,6 +131,7 @@ struct ControlLoop<'a, Reload, Terminate> {
     cfg: &'a Config,
     state: &'a State,
     mon: &'a mut dyn Monitor,
+    root: RootData,
 }
 
 impl<'a, Reload, Terminate> ControlLoop<'a, Reload, Terminate>
@@ -146,15 +148,9 @@ where
             let mut cxn = self.pool.acquire().await.unwrap();
             state.current_wps.clear();
             for monitor in self.mon.idents().await? {
-                let ent = match db::pickwp(&mut cxn, &self.cfg.filter).await? {
+                let ent = match db::pickwp(&mut cxn, self.root.id(), &self.cfg.filter).await? {
                     Some((_, path)) => {
-                        let absolute_path = self
-                            .cfg
-                            .wp_dir
-                            .join(path.as_ref())
-                            .into_os_string()
-                            .into_string()
-                            .unwrap();
+                        let absolute_path = self.root.root(&path);
 
                         self.mon
                             .set_wallpaper(self.cfg.mode, &monitor, &absolute_path)
@@ -207,7 +203,7 @@ where
 
                 Some(_) = rescan.next() => {
                     slog_scope::info!("Starting rescan");
-                    self.image_scanner.start_scan(self.pool, self.cfg.wp_dir.clone());
+                    self.image_scanner.start_scan(self.pool, self.root.clone());
                 }
 
                 Some(_) = refresh.next() => {

@@ -11,7 +11,7 @@ use time::{Date, OffsetDateTime, UtcOffset};
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
-    pub wp_dir: PathBuf,
+    pub wp_dir: String,
     //pub backend: Backend,
     pub mode: Mode,
     //pub time: TimeKind,

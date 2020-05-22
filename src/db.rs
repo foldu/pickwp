@@ -1,5 +1,7 @@
-use crate::cfg::Filter;
-use crate::data::{PathData, RelativePath, Time, UnixTimestamp};
+use crate::{
+    cfg::Filter,
+    data::{PathData, RelativePath, Time, UnixTimestamp},
+};
 use snafu::ResultExt;
 use sqlx::{prelude::*, sqlite::SqliteRow, SqliteConnection};
 use std::{
@@ -20,7 +22,7 @@ pub enum OpenError {
     #[snafu(display("Could not check for database existence"))]
     DbMeta { source: std::io::Error },
 
-    #[snafu(display("Could not apply schema"))]
+    #[snafu(display("Could not apply schema: {}", source))]
     DbSchema { source: sqlx::Error },
 }
 
@@ -52,11 +54,42 @@ pub async fn open(db_path: &str) -> Result<sqlx::SqlitePool, OpenError> {
 
 pub type Error = sqlx::Error;
 
-#[derive(Copy, Clone, Ord, Eq, PartialEq, PartialOrd, Debug)]
+#[derive(Copy, Clone, Ord, Eq, PartialEq, PartialOrd, Debug, sqlx::Type)]
+#[sqlx(transparent)]
 pub struct PathId(i32);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, sqlx::Type)]
+#[sqlx(transparent)]
 struct TagId(i32);
+
+#[derive(Copy, Clone, Debug, sqlx::Type, PartialEq, Eq)]
+#[sqlx(transparent)]
+pub struct RootId(i32);
+
+#[derive(Debug, Clone)]
+pub struct RootData {
+    path: String,
+    id: RootId,
+}
+
+impl RootData {
+    pub fn path(&self) -> &Path {
+        Path::new(&self.path)
+    }
+
+    pub fn id(&self) -> RootId {
+        self.id
+    }
+
+    pub fn root(&self, path: &RelativePath) -> String {
+        // concating two strings so should never panic
+        self.path()
+            .join(path.as_ref())
+            .into_os_string()
+            .into_string()
+            .unwrap()
+    }
+}
 
 pub async fn update_timestamp(cxn: &mut SqliteConnection, data: &PathData) -> Result<(), Error> {
     sqlx::query!(
@@ -64,11 +97,13 @@ pub async fn update_timestamp(cxn: &mut SqliteConnection, data: &PathData) -> Re
         UPDATE relative_path
         SET unix_mtime = ?,
             unix_btime = ?
-        WHERE file_path = ?
+        WHERE file_path = ? AND
+              root_id = ?
         ",
         data.time.mtime,
         data.time.btime,
         data.path.as_ref(),
+        data.root_id
     )
     .execute(cxn)
     .await
@@ -77,19 +112,23 @@ pub async fn update_timestamp(cxn: &mut SqliteConnection, data: &PathData) -> Re
 
 pub async fn fetch_path_time(
     cxn: &mut SqliteConnection,
+    root_id: RootId,
     path: &RelativePath,
 ) -> Result<Option<Time>, Error> {
-    sqlx::query("SELECT unix_mtime, unix_btime FROM relative_path WHERE file_path = ?")
-        .bind(path.as_ref())
-        .try_map(|row: sqlx::sqlite::SqliteRow| {
-            let btime: Option<UnixTimestamp> = row.get("unix_btime");
-            Ok(Time {
-                btime,
-                mtime: row.get("unix_mtime"),
-            })
+    sqlx::query(
+        "SELECT unix_mtime, unix_btime FROM relative_path WHERE file_path = ? AND root_id = ?",
+    )
+    .bind(path.as_ref())
+    .bind(root_id)
+    .try_map(|row: sqlx::sqlite::SqliteRow| {
+        let btime: Option<UnixTimestamp> = row.get("unix_btime");
+        Ok(Time {
+            btime,
+            mtime: row.get("unix_mtime"),
         })
-        .fetch_optional(cxn)
-        .await
+    })
+    .fetch_optional(cxn)
+    .await
 }
 
 pub async fn insert_new_path(
@@ -116,8 +155,8 @@ async fn associate_path_with_tags(
     for tag in tags {
         sqlx::query!(
             "INSERT INTO path_tag(relative_path_id, tag_id) VALUES (?, ?)",
-            path.0,
-            tag.0
+            path,
+            tag
         )
         .execute(&mut cxn)
         .await?;
@@ -142,9 +181,10 @@ async fn insert_relative_path(
     sqlx::query!(
         "
         INSERT INTO
-            relative_path(file_path, unix_mtime, unix_btime)
+            relative_path(root_id, file_path, unix_mtime, unix_btime)
         VALUES
-            (?, ?, ?)",
+            (?, ?, ?, ?)",
+        relative_path.root_id,
         relative_path.path.as_ref(),
         relative_path.time.mtime,
         relative_path.time.btime,
@@ -187,8 +227,26 @@ async fn build_tag_where_clause(
     })
 }
 
+pub async fn get_or_insert_root(
+    mut cxn: &mut SqliteConnection,
+    path: String,
+) -> Result<RootData, Error> {
+    sqlx::query!("INSERT OR IGNORE INTO root(root_path) VALUES(?)", path)
+        .execute(&mut cxn)
+        .await?;
+
+    sqlx::query!("SELECT id FROM root WHERE root_path = ?", &path)
+        .fetch_one(&mut *cxn)
+        .await
+        .map(|row| RootData {
+            id: RootId(row.id.unwrap()),
+            path,
+        })
+}
+
 pub async fn pickwp(
     cxn: &mut SqliteConnection,
+    root_id: RootId,
     filter: &Filter,
 ) -> Result<Option<(PathId, RelativePath)>, Error> {
     let to_time = filter
@@ -207,7 +265,8 @@ pub async fn pickwp(
             INNER JOIN path_tag ON path_tag.relative_path_id = relative_path.id
             INNER JOIN tag ON path_tag.tag_id = tag.id
             WHERE
-                relative_path.unix_mtime <= ?
+                root_id = ?
+                AND relative_path.unix_mtime <= ?
                 AND relative_path.unix_mtime >= ?
                 {}
             ORDER BY RANDOM()
@@ -217,6 +276,7 @@ pub async fn pickwp(
     );
 
     sqlx::query(&query)
+        .bind(root_id)
         .bind(to_time)
         .bind(from_time)
         .try_map(|row: SqliteRow| {

@@ -1,7 +1,8 @@
+use crate::db::RootId;
 use std::{convert::TryFrom, os::unix::prelude::*, path::PathBuf, time::SystemTime};
 use time::OffsetDateTime;
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, derive_more::Deref, derive_more::AsRef)]
 pub struct RelativePath(String);
 
 #[derive(snafu::Snafu, Debug)]
@@ -29,19 +30,6 @@ impl TryFrom<String> for RelativePath {
     type Error = RelativePathError;
     fn try_from(other: String) -> Result<Self, Self::Error> {
         Self::try_from(PathBuf::from(other))
-    }
-}
-
-impl std::ops::Deref for RelativePath {
-    type Target = String;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<str> for RelativePath {
-    fn as_ref(&self) -> &str {
-        &self.0
     }
 }
 
@@ -82,6 +70,7 @@ pub struct Time {
 
 #[derive(Debug)]
 pub struct PathData {
+    pub root_id: RootId,
     pub path: RelativePath,
     pub time: Time,
 }
