@@ -171,7 +171,7 @@ async fn get_or_insert_tag(mut cxn: &mut SqliteConnection, tag: &str) -> Result<
     sqlx::query!("SELECT id FROM tag WHERE name = ?", tag)
         .fetch_one(cxn)
         .await
-        .map(|row| TagId(row.id.unwrap()))
+        .map(|row| TagId(row.id))
 }
 
 async fn insert_relative_path(
@@ -198,14 +198,14 @@ async fn insert_relative_path(
     )
     .fetch_one(cxn)
     .await
-    .map(|row| PathId(row.id.unwrap()))
+    .map(|row| PathId(row.id))
 }
 
 async fn fetch_tag_id(cxn: &mut SqliteConnection, tag: &str) -> Result<Option<i32>, Error> {
     sqlx::query!("SELECT id FROM tag WHERE name = ?", tag)
         .fetch_optional(cxn)
         .await
-        .map(|row| row.map(|row| row.id.unwrap()))
+        .map(|row| row.map(|row| row.id))
 }
 
 async fn build_tag_where_clause(
@@ -239,7 +239,7 @@ pub async fn get_or_insert_root(
         .fetch_one(&mut *cxn)
         .await
         .map(|row| RootData {
-            id: RootId(row.id.unwrap()),
+            id: RootId(row.id),
             path,
         })
 }
