@@ -36,7 +36,6 @@ pub async fn open(db_path: &str) -> Result<sqlx::SqlitePool, OpenError> {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
     let pool = sqlx::Pool::builder()
-        .max_size(2_u32)
         .build(&format!("sqlite://{}", db_path))
         .await
         .context(OpenDb)?;
@@ -92,6 +91,7 @@ impl RootData {
 }
 
 pub async fn update_timestamp(cxn: &mut SqliteConnection, data: &PathData) -> Result<(), Error> {
+    let path = data.path.as_ref();
     sqlx::query!(
         "
         UPDATE relative_path
@@ -102,7 +102,7 @@ pub async fn update_timestamp(cxn: &mut SqliteConnection, data: &PathData) -> Re
         ",
         data.time.mtime,
         data.time.btime,
-        data.path.as_ref(),
+        path,
         data.root_id
     )
     .execute(cxn)
@@ -148,7 +148,7 @@ pub async fn insert_new_path(
 }
 
 async fn associate_path_with_tags(
-    mut cxn: &mut SqliteConnection,
+    cxn: &mut SqliteConnection,
     path: PathId,
     tags: &[TagId],
 ) -> Result<(), Error> {
@@ -158,15 +158,15 @@ async fn associate_path_with_tags(
             path,
             tag
         )
-        .execute(&mut cxn)
+        .execute(&mut *cxn)
         .await?;
     }
     Ok(())
 }
 
-async fn get_or_insert_tag(mut cxn: &mut SqliteConnection, tag: &str) -> Result<TagId, Error> {
+async fn get_or_insert_tag(cxn: &mut SqliteConnection, tag: &str) -> Result<TagId, Error> {
     sqlx::query!("INSERT OR IGNORE INTO tag(name) VALUES(?)", tag)
-        .execute(&mut cxn)
+        .execute(&mut *cxn)
         .await?;
     sqlx::query!("SELECT id FROM tag WHERE name = ?", tag)
         .fetch_one(cxn)
@@ -175,9 +175,10 @@ async fn get_or_insert_tag(mut cxn: &mut SqliteConnection, tag: &str) -> Result<
 }
 
 async fn insert_relative_path(
-    mut cxn: &mut SqliteConnection,
+    cxn: &mut SqliteConnection,
     relative_path: &PathData,
 ) -> Result<PathId, Error> {
+    let path = relative_path.path.as_ref();
     sqlx::query!(
         "
         INSERT INTO
@@ -185,20 +186,17 @@ async fn insert_relative_path(
         VALUES
             (?, ?, ?, ?)",
         relative_path.root_id,
-        relative_path.path.as_ref(),
+        path,
         relative_path.time.mtime,
         relative_path.time.btime,
     )
-    .execute(&mut cxn)
+    .execute(&mut *cxn)
     .await?;
 
-    sqlx::query!(
-        "SELECT id FROM relative_path WHERE file_path = ?",
-        relative_path.path.as_ref()
-    )
-    .fetch_one(cxn)
-    .await
-    .map(|row| PathId(row.id))
+    sqlx::query!("SELECT id FROM relative_path WHERE file_path = ?", path,)
+        .fetch_one(cxn)
+        .await
+        .map(|row| PathId(row.id))
 }
 
 async fn fetch_tag_id(cxn: &mut SqliteConnection, tag: &str) -> Result<Option<i32>, Error> {
@@ -228,14 +226,15 @@ async fn build_tag_where_clause(
 }
 
 pub async fn get_or_insert_root(
-    mut cxn: &mut SqliteConnection,
+    cxn: &mut SqliteConnection,
     path: String,
 ) -> Result<RootData, Error> {
     sqlx::query!("INSERT OR IGNORE INTO root(root_path) VALUES(?)", path)
-        .execute(&mut cxn)
+        .execute(&mut *cxn)
         .await?;
 
-    sqlx::query!("SELECT id FROM root WHERE root_path = ?", &path)
+    let path_ref = &path;
+    sqlx::query!("SELECT id FROM root WHERE root_path = ?", path_ref)
         .fetch_one(&mut *cxn)
         .await
         .map(|row| RootData {
