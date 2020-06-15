@@ -10,7 +10,7 @@ edition = "2018"
 tokio = { version = "0.2.21", features = ["rt-core", "signal", "sync", "time", "blocking", "stream", "fs", "macros"] }
 snafu = "0.6.8"
 futures-util = "0.3.5"
-serde = { version = "1.0.111", features = ["derive"] }
+serde = { version = "1.0.112", features = ["derive"] }
 phf = { version = "0.8.0", features = ["macros"] }
 humantime-serde = "1.0.0"
 tgcd = { git = "https://github.com/foldu/tgcd", rev = "267f03adb3b39031f0c02ce7920228189004591b", default-features = false }
@@ -44,5 +44,5 @@ default-features = false
 features = ["sqlite", "macros", "runtime-tokio"]
 
 [build-dependencies]
-serde = "1.0.111"
+serde = "1.0.112"
 structopt = "0.3.14"
