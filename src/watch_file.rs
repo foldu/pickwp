@@ -79,7 +79,7 @@ fn watch_file(
         let mut buf = vec![0; 4 * (1 << 10)];
         let parent = path.parent().unwrap();
         loop {
-            slog_scope::info!("Starting watch loop");
+            tracing::info!("Starting watch loop");
             match inotify.add_watch(parent, WatchMask::CLOSE_WRITE | WatchMask::DELETE_SELF) {
                 Ok(desc) => {
                     match watch(&mut inotify, &mut buf, &mut tx, &path).await {

@@ -72,7 +72,7 @@ fn scan(root: RootData) -> tokio::sync::mpsc::Receiver<(PathBuf, PathData)> {
                         Ok(_) => break,
                         Err(TrySendError::Full(a)) => {
                             to_send = a;
-                            slog_scope::debug!("Scan channel buffer full");
+                            //tracing::debug!("Scan channel buffer full");
                             std::thread::sleep(std::time::Duration::from_millis(5));
                         }
                         Err(TrySendError::Closed(_)) => return,
@@ -107,7 +107,7 @@ where
                     Ok(_) => break,
                     Err(TrySendError::Full(a)) => {
                         ret = a;
-                        slog_scope::debug!("Jobset buffer full");
+                        tracing::debug!("Jobset buffer full");
                         std::thread::sleep(std::time::Duration::from_millis(5));
                     }
                     Err(TrySendError::Closed(_)) => return,
@@ -134,7 +134,7 @@ impl ImageScanner {
         let this = self.0.clone();
         let task = task::spawn(async move {
             if let Ok(_) = this.scanning.try_lock() {
-                slog_scope::debug!("Starting scan");
+                tracing::info!("Starting scan");
 
                 let (state, mut abort) = ScanState::scanning(root.clone());
                 {
@@ -163,7 +163,7 @@ impl ImageScanner {
                                     match db::fetch_path_time(&mut txn, root_id, &path_data.path).await? {
                                         Some(time) if time == path_data.time => (),
                                         Some(time) => {
-                                            slog_scope::info!("Updating meta of {}", path_data.path.as_ref());
+                                            tracing::info!("Updating meta of {}", path_data.path.as_ref());
                                             db::update_timestamp(&mut txn, &PathData { time, ..path_data }).await?;
                                         }
                                         None => {
@@ -184,7 +184,7 @@ impl ImageScanner {
                             match job {
                                 Some(Ok((path_data, hash))) => {
                                     let tags = tgcd.get_tags(&hash).await.unwrap();
-                                    slog_scope::info!("Found new file: {}", path_data.path.as_ref());
+                                    tracing::info!("Found new file: {}", path_data.path.as_ref());
                                     db::insert_new_path(&mut txn, &path_data, &tags).await?;
                                 }
                                 None => {
@@ -199,6 +199,7 @@ impl ImageScanner {
 
                 txn.commit().await?;
             };
+
             Ok(())
         });
 
@@ -206,7 +207,7 @@ impl ImageScanner {
         task::spawn(async move {
             if let Err(e) = task.await.unwrap() {
                 let e: anyhow::Error = e;
-                slog_scope::error!("{}", e);
+                tracing::error!("{}", e);
             }
             *this.state.lock().await = ScanState::Idle;
         });

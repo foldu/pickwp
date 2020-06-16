@@ -12,7 +12,6 @@ mod util;
 mod watch_file;
 
 use crate::cli::Opt;
-use slog::Drain;
 use structopt::StructOpt;
 
 async fn run(opt: Opt) -> Result<(), anyhow::Error> {
@@ -23,15 +22,17 @@ async fn run(opt: Opt) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn init_global_logger() -> slog_scope::GlobalLoggerGuard {
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = std::sync::Mutex::new(slog_term::FullFormat::new(decorator).build())
-        .filter_level(slog::Level::Debug)
-        .fuse();
-
-    let logger = slog::Logger::root(drain, slog::o!());
-
-    slog_scope::set_global_logger(logger)
+fn init_global_logger() {
+    // FIXME: hack for default log level=info
+    match std::env::var_os("RUST_LOG") {
+        Some(_) => (),
+        None => {
+            std::env::set_var("RUST_LOG", "info");
+        }
+    };
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init()
 }
 
 fn main() {

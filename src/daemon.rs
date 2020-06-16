@@ -75,7 +75,7 @@ pub async fn run() -> Result<(), Error> {
             root,
         };
 
-        slog_scope::debug!("Starting event loop");
+        tracing::debug!("Starting event loop");
 
         match loop_.run().await {
             Ok(LoopExit::Terminate) => break Ok(()),
@@ -156,11 +156,15 @@ where
                             .set_wallpaper(self.cfg.mode, &monitor, &absolute_path)
                             .await?;
 
-                        slog_scope::info!("Set wp"; "monitor" => &monitor, "path" => &absolute_path);
+                        tracing::info!(
+                            monitor = monitor.as_str(),
+                            path = absolute_path.as_str(),
+                            "Set wp"
+                        );
                         Some(absolute_path)
                     }
                     None => {
-                        slog_scope::info!("No wp found for"; "monitor" => &monitor);
+                        tracing::info!(monitor = monitor.as_str(), "No wp found for");
                         None
                     }
                 };
@@ -188,11 +192,11 @@ where
                 Some(new_cfg) = self.cfg_reload.next() => {
                     match Config::from_slice(&new_cfg) {
                         Ok(new_cfg) => {
-                            slog_scope::info!("Reloaded config");
+                            tracing::info!("Reloaded config");
                             return Ok(LoopExit::NewCfg(new_cfg));
                         }
                         Err(e) => {
-                            slog_scope::error!("{}", e);
+                            tracing::error!("{}", e);
                         }
                     }
                 }
@@ -202,13 +206,12 @@ where
                 }
 
                 Some(_) = rescan.next() => {
-                    slog_scope::info!("Starting rescan");
                     self.image_scanner.start_scan(self.pool, self.root.clone());
                 }
 
                 Some(_) = refresh.next() => {
                     if let Err(e) = self.pickwp().await {
-                        slog_scope::error!("{}", e);
+                        tracing::error!("{}", e);
                     }
                 }
             }
