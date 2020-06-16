@@ -4,7 +4,7 @@ use crate::{
 };
 use futures_util::stream::{Stream, StreamExt};
 use sqlx::SqlitePool;
-use std::{convert::TryFrom, path::PathBuf, sync::Arc};
+use std::{convert::TryFrom, path::PathBuf, sync::Arc, time::Instant};
 use tokio::{
     sync::{
         mpsc::{self, error::TrySendError},
@@ -134,6 +134,8 @@ impl ImageScanner {
         let this = self.0.clone();
         let task = task::spawn(async move {
             if let Ok(_) = this.scanning.try_lock() {
+                let scan_begin = Instant::now();
+
                 tracing::info!("Starting scan");
 
                 let (state, mut abort) = ScanState::scanning(root.clone());
@@ -196,6 +198,11 @@ impl ImageScanner {
                         else => break,
                     }
                 }
+
+                tracing::info!(
+                    duration = %humantime::Duration::from(Instant::now().duration_since(scan_begin)),
+                    "Finished scan",
+                );
 
                 txn.commit().await?;
             };

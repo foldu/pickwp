@@ -1049,6 +1049,7 @@ dependencies = [
  "derive_more",
  "directories",
  "futures-util",
+ "humantime 2.0.1",
  "humantime-serde",
  "inotify",
  "libc",
