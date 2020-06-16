@@ -1,75 +1,14 @@
-name: ci
+name: CI
 on:
-  pull_request:
   push:
-    branches:
-      - master
+  pull_request:
+
 jobs:
   test:
-    name: test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        # The docs seem to suggest that we can have a matrix with just an
-        # include directive, but it result in a "matrix must define at least
-        # one vector" error in the CI system.
-        build: [stable]
-        include:
-          - build: stable
-            os: ubuntu-18.04
-            rust: stable
+    name: Test build
+    runs-on: ubuntu-18.04
     steps:
-      - name: Install dependencies
-        run: sudo apt-get install -y libsqlite3-dev
-      - name: Checkout repository
-        uses: actions/checkout@v1
-        with:
-          fetch-depth: 1
-      - name: Install Rust
-        uses: hecrj/setup-rust-action@v1
-        with:
-          rust-version: ${{ matrix.rust }}
-      - run: cargo build --verbose
-      - run: cargo doc --verbose
-      - run: cargo test --verbose
-
-  rustfmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v1
-
-      - name: Install nightly toolchain with rustfmt available
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-          components: rustfmt
-
-      - name: Run cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-
-  deny-check:
-    name: cargo-deny check
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v1
-    - name: download cargo-deny
-      shell: bash
-      env:
-        DVS: "0.4.0"
-        DREPO: EmbarkStudios/cargo-deny
-        TARGET: x86_64-unknown-linux-musl
-      run: |
-        temp_archive=$(mktemp --suffix=.tar.gz)
-        curl -L --output "$temp_archive" https://github.com/$DREPO/releases/download/$DVS/cargo-deny-$DVS-$TARGET.tar.gz
-        tar -xzvf "$temp_archive" -C . --strip-components=1 --wildcards "*/cargo-deny"
-    - name: cargo-deny check licenses
-      run: ./cargo-deny -L debug check license
-    - name: cargo-deny check bans
-      run: ./cargo-deny -L debug check ban
+      - uses: actions/checkout@v2
+      - uses: cachix/install-nix-action@v10
+      - name: Test
+        run: nix-build -E '(import ./release.nix { debug = true; })'

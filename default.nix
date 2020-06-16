@@ -4,6 +4,7 @@
 , openssl
 , pkgconfig
 , installShellFiles
+, test
 }:
 
 let
@@ -13,6 +14,9 @@ let
 in
 naersk.buildPackage {
   inherit src;
+  singleStep = true;
+  release = !test;
+  doCheck = test;
   buildInputs = [
     protobuf
     sqlite
