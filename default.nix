@@ -4,7 +4,7 @@
 , openssl
 , pkgconfig
 , installShellFiles
-, test
+, test ? false
 }:
 
 let
