@@ -627,9 +627,9 @@ dependencies = [
 
 [[package]]
 name = "i3ipc-types"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2233b73c7b56459aa996d1e381ac02dfaf5426f9364e22afaf76370529028876"
+checksum = "e67251c4c0723d3866cd9178db0dbd316d4c9c403682b336d93e160256cf885a"
 dependencies = [
  "serde",
  "serde_derive",
@@ -1953,9 +1953,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-i3ipc"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db1d845979ced066bdef10914e226c9504e8eb830b47bfb7271f84fae7e675e8"
+checksum = "b7c1b226c01e42f06efe9e8a311f294002567ed5b39ef960c2f595cda24751dc"
 dependencies = [
  "bytes",
  "i3ipc-types",
