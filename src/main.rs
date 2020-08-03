@@ -27,7 +27,7 @@ fn init_global_logger() {
     match std::env::var_os("RUST_LOG") {
         Some(_) => (),
         None => {
-            std::env::set_var("RUST_LOG", "info");
+            std::env::set_var("RUST_LOG", "pickwp=info");
         }
     };
     tracing_subscriber::fmt()

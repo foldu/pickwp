@@ -9,7 +9,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tgcd::Tag;
-use tokio::fs;
 
 #[derive(snafu::Snafu, Debug)]
 pub enum OpenError {
@@ -22,32 +21,30 @@ pub enum OpenError {
     #[snafu(display("Could not check for database existence"))]
     DbMeta { source: std::io::Error },
 
-    #[snafu(display("Could not apply schema: {}", source))]
-    DbSchema { source: sqlx::Error },
+    #[snafu(display("Could not apply migrations: {}", source))]
+    Migrations { source: sqlx::migrate::MigrateError },
 }
 
-pub async fn open(db_path: &str) -> Result<sqlx::SqlitePool, OpenError> {
-    let run_create = match fs::metadata(&db_path).await {
-        Ok(_meta) => false,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
-        Err(source) => return Err(OpenError::DbMeta { source }),
-    };
-    if let Some(parent) = Path::new(db_path).parent() {
+pub async fn open(db_path: impl AsRef<Path>) -> Result<sqlx::SqlitePool, OpenError> {
+    let db_path = db_path.as_ref();
+    if let Some(parent) = db_path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    let pool = sqlx::Pool::builder()
-        .build(&format!("sqlite://{}", db_path))
+
+    let pool = sqlx::pool::PoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(db_path)
+                .create_if_missing(true),
+        )
         .await
         .context(OpenDb)?;
 
-    if run_create {
-        let mut cxn = pool.acquire().await.unwrap();
-        let schema = include_str!("../sql/schema.sql");
-        sqlx::query(schema)
-            .execute(&mut cxn)
-            .await
-            .context(DbSchema)?;
-    }
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .context(Migrations)?;
+
     Ok(pool)
 }
 
@@ -55,15 +52,15 @@ pub type Error = sqlx::Error;
 
 #[derive(Copy, Clone, Ord, Eq, PartialEq, PartialOrd, Debug, sqlx::Type)]
 #[sqlx(transparent)]
-pub struct PathId(i32);
+pub struct PathId(i64);
 
 #[derive(Copy, Clone, sqlx::Type)]
 #[sqlx(transparent)]
-struct TagId(i32);
+struct TagId(i64);
 
 #[derive(Copy, Clone, Debug, sqlx::Type, PartialEq, Eq)]
 #[sqlx(transparent)]
-pub struct RootId(i32);
+pub struct RootId(i64);
 
 #[derive(Debug, Clone)]
 pub struct RootData {
@@ -199,7 +196,7 @@ async fn insert_relative_path(
         .map(|row| PathId(row.id))
 }
 
-async fn fetch_tag_id(cxn: &mut SqliteConnection, tag: &str) -> Result<Option<i32>, Error> {
+async fn fetch_tag_id(cxn: &mut SqliteConnection, tag: &str) -> Result<Option<i64>, Error> {
     sqlx::query!("SELECT id FROM tag WHERE name = ?", tag)
         .fetch_optional(cxn)
         .await
@@ -280,10 +277,7 @@ pub async fn pickwp(
         .bind(from_time)
         .try_map(|row: SqliteRow| {
             let path: String = row.get("file_path");
-            Ok((
-                PathId(row.get::<i32, _>("id")),
-                RelativePath::try_from(path).unwrap(),
-            ))
+            Ok((PathId(row.get("id")), RelativePath::try_from(path).unwrap()))
         })
         .fetch_optional(cxn)
         .await
