@@ -69,49 +69,35 @@ impl Listener {
     }
 }
 
-type DynFut<T> = std::pin::Pin<Box<dyn Future<Output = T> + 'static + Sync + Send>>;
-
+#[tarpc::server]
 impl super::PickwpService for daemon::State {
-    type RefreshFut = DynFut<()>;
-    type ScanFut = DynFut<()>;
-    type GetWallpapersFut = DynFut<BTreeMap<String, Option<String>>>;
-    type ToggleFreezeFut = DynFut<bool>;
-
-    fn refresh(self, _: Context) -> Self::RefreshFut {
-        Box::pin(async move {
-            if let Some(state) = self.lock().await.as_mut() {
-                state.refresh_preempt.preempt().await;
-            }
-        })
+    async fn refresh(self, _: Context) {
+        if let Some(state) = self.lock().await.as_mut() {
+            state.refresh_preempt.preempt().await;
+        }
     }
 
-    fn scan(self, _: Context) -> Self::ScanFut {
-        Box::pin(async move {
-            if let Some(state) = self.lock().await.as_mut() {
-                state.scan_preempt.preempt().await;
-            }
-        })
+    async fn scan(self, _: Context) {
+        if let Some(state) = self.lock().await.as_mut() {
+            state.scan_preempt.preempt().await;
+        }
     }
 
-    fn get_wallpapers(self, _: Context) -> Self::GetWallpapersFut {
-        Box::pin(async move {
-            if let Some(state) = self.lock().await.as_ref() {
-                state.current_wps.clone()
-            } else {
-                Default::default()
-            }
-        })
+    async fn get_wallpapers(self, _: Context) -> BTreeMap<String, Option<String>> {
+        if let Some(state) = self.lock().await.as_ref() {
+            state.current_wps.clone()
+        } else {
+            Default::default()
+        }
     }
 
-    fn toggle_freeze(self, _: Context) -> Self::ToggleFreezeFut {
-        Box::pin(async move {
-            if let Some(state) = self.lock().await.as_mut() {
-                state.frozen = !state.frozen;
-                state.frozen
-            } else {
-                false
-            }
-        })
+    async fn toggle_freeze(self, _: Context) -> bool {
+        if let Some(state) = self.lock().await.as_mut() {
+            state.frozen = !state.frozen;
+            state.frozen
+        } else {
+            false
+        }
     }
 }
 
