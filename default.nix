@@ -2,7 +2,8 @@
 , protobuf
 , sqlite
 , openssl
-, pkgconfig
+, pkg-config
+, perl
 , installShellFiles
 , test ? false
 }:
