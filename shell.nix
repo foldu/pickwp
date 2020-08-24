@@ -10,6 +10,7 @@ pkgs.mkShell {
     pkgs.sqlite
     pkgs.openssl
     pkgs.pkg-config
+    pkgs.perl
   ];
   PROTOC = "${pkgs.protobuf}/bin/protoc";
   DATABASE_URL = "sqlite://${db}";

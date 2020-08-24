@@ -17,11 +17,13 @@ naersk.buildPackage {
   singleStep = true;
   release = !test;
   doCheck = test;
-  buildInputs = [
+  nativeBuildInputs = [
     protobuf
     sqlite
     openssl
-    pkgconfig
+    pkg-config
+    # openssl build
+    perl
     installShellFiles
   ];
   preBuild = ''
