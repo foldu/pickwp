@@ -58,6 +58,6 @@ serde = "1.0.116"
 structopt = "0.3.20"
 
 # just used to remove openssl from the binary
-#[profile.release]
-#lto = "fat"
-#codegen-units = 1
+[profile.release]
+lto = "fat"
+codegen-units = 1
