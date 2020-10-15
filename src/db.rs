@@ -89,6 +89,7 @@ impl RootData {
 
 pub async fn update_timestamp(cxn: &mut SqliteConnection, data: &PathData) -> Result<(), Error> {
     let path = data.path.as_ref();
+
     sqlx::query!(
         "
         UPDATE relative_path
@@ -102,9 +103,11 @@ pub async fn update_timestamp(cxn: &mut SqliteConnection, data: &PathData) -> Re
         path,
         data.root_id
     )
-    .execute(cxn)
+    .execute(&mut *cxn)
     .await
-    .map(|_| ())
+    .map(|ret| {
+        assert!(ret.rows_affected() == 1);
+    })
 }
 
 pub async fn fetch_path_time(
@@ -118,9 +121,8 @@ pub async fn fetch_path_time(
     .bind(path.as_ref())
     .bind(root_id)
     .try_map(|row: sqlx::sqlite::SqliteRow| {
-        let btime: Option<UnixTimestamp> = row.get("unix_btime");
         Ok(Time {
-            btime,
+            btime: row.get("unix_btime"),
             mtime: row.get("unix_mtime"),
         })
     })

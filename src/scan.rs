@@ -164,9 +164,9 @@ impl ImageScanner {
                                 Some((absolute, path_data)) => {
                                     match db::fetch_path_time(&mut txn, root_id, &path_data.path).await? {
                                         Some(time) if time == path_data.time => (),
-                                        Some(time) => {
+                                        Some(_) => {
                                             tracing::info!("Updating meta of {}", path_data.path.as_ref());
-                                            db::update_timestamp(&mut txn, &PathData { time, ..path_data }).await?;
+                                            db::update_timestamp(&mut txn, &path_data).await?;
                                         }
                                         None => {
                                             spawner.execute(move || -> Result<_, std::io::Error> {
