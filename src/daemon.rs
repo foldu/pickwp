@@ -52,8 +52,10 @@ pub async fn run() -> Result<(), Error> {
 
     let mut image_scanner = crate::scan::ImageScanner::new();
 
-    // FIXME: make configurable
-    let mut mon: Box<dyn Monitor> = Box::new(crate::monitor::Sway::default());
+    // TODO: make configurable
+    // FIXME: unwrap
+    let mut mon: Box<dyn Monitor> = Box::new(crate::monitor::Sway::new().await?);
+    let mut display_changed = mon.display_changed().await?;
 
     loop {
         let root = {
@@ -66,6 +68,7 @@ pub async fn run() -> Result<(), Error> {
 
         let loop_ = ControlLoop {
             cfg_reload: &mut cfg_reload,
+            display_changed: &mut display_changed,
             terminate: &mut term,
             image_scanner: &mut image_scanner,
             pool: &pool,
@@ -131,6 +134,7 @@ struct ControlLoop<'a, Reload, Terminate> {
     cfg: &'a Config,
     state: &'a State,
     mon: &'a mut dyn Monitor,
+    display_changed: &'a mut (dyn Stream<Item = Result<(), crate::monitor::Error>> + Unpin),
     root: RootData,
 }
 
@@ -175,6 +179,12 @@ where
         Ok(())
     }
 
+    async fn pick(&mut self) {
+        if let Err(e) = self.pickwp().await {
+            tracing::error!("{}", e);
+        }
+    }
+
     async fn run(mut self) -> Result<LoopExit, Error> {
         let (mut refresh_preempt, mut refresh) =
             crate::util::preemptible_interval(self.cfg.refresh_interval);
@@ -210,8 +220,15 @@ where
                 }
 
                 Some(_) = refresh.next() => {
-                    if let Err(e) = self.pickwp().await {
-                        tracing::error!("{}", e);
+                    self.pick().await;
+                }
+
+                Some(event) = self.display_changed.next() => {
+                    match event {
+                        Ok(()) => self.pick().await,
+                        Err(e) => {
+                            tracing::error!("{}", e);
+                        }
                     }
                 }
             }
