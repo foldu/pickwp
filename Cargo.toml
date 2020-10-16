@@ -10,7 +10,7 @@ edition = "2018"
 tokio = { version = "0.2.22", features = ["rt-core", "signal", "sync", "time", "blocking", "stream", "fs", "macros"] }
 snafu = "0.6.9"
 futures-util = "0.3.6"
-serde = { version = "1.0.116", features = ["derive"] }
+serde = { version = "1.0.117", features = ["derive"] }
 phf = { version = "0.8.0", features = ["macros"] }
 humantime-serde = "1.0.1"
 tgcd = { git = "https://github.com/foldu/tgcd", rev = "267f03adb3b39031f0c02ce7920228189004591b", default-features = false }
@@ -54,7 +54,7 @@ features = [
 ]
 
 [build-dependencies]
-serde = "1.0.116"
+serde = "1.0.117"
 structopt = "0.3.20"
 
 # just used to remove openssl from the binary
