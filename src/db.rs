@@ -220,7 +220,7 @@ async fn build_tag_where_clause(
         String::new()
     } else {
         let id_list = tag_ids.join(",");
-        format!("({})", id_list)
+        format!("AND path_tag.tag_id IN ({})", id_list)
     })
 }
 
@@ -263,7 +263,7 @@ pub async fn pickwp(
                    (SELECT COUNT(*)
                          FROM path_tag
                          WHERE path_tag.relative_path_id = relative_path.id
-                               AND path_tag.tag_id IN {}) AS tag_count
+                               {}) AS tag_count
             FROM relative_path
             WHERE
                 root_id = ?
