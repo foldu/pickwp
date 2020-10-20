@@ -220,7 +220,7 @@ async fn build_tag_where_clause(
         String::new()
     } else {
         let id_list = tag_ids.join(",");
-        format!("AND tag.id IN ({})", id_list)
+        format!("({})", id_list)
     })
 }
 
@@ -258,18 +258,22 @@ pub async fn pickwp(
 
     let query = format!(
         "
-            SELECT relative_path.id, relative_path.file_path
+            SELECT relative_path.id,
+                   relative_path.file_path,
+                   (SELECT COUNT(*)
+                         FROM path_tag
+                         WHERE path_tag.relative_path_id = relative_path.id
+                               AND path_tag.tag_id IN {}) AS tag_count
             FROM relative_path
-            INNER JOIN path_tag ON path_tag.relative_path_id = relative_path.id
-            INNER JOIN tag ON path_tag.tag_id = tag.id
             WHERE
                 root_id = ?
                 AND relative_path.unix_mtime <= ?
                 AND relative_path.unix_mtime >= ?
-                {}
+                AND tag_count = ?
             ORDER BY RANDOM()
             LIMIT 1
         ",
+        // NOTE: this builds a list of numbers, sql injection not possible
         build_tag_where_clause(cxn, &filter.tags).await?
     );
 
@@ -277,6 +281,7 @@ pub async fn pickwp(
         .bind(root_id)
         .bind(to_time)
         .bind(from_time)
+        .bind(i32::try_from(filter.tags.len()).unwrap())
         .try_map(|row: SqliteRow| {
             let path: String = row.get("file_path");
             Ok((PathId(row.get("id")), RelativePath::try_from(path).unwrap()))
