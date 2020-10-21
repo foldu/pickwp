@@ -217,7 +217,7 @@ async fn build_tag_where_clause(
     }
 
     Ok(if tag_ids.is_empty() {
-        String::new()
+        "AND 0 = 1".to_string()
     } else {
         let id_list = tag_ids.join(",");
         format!("AND path_tag.tag_id IN ({})", id_list)
