@@ -16,7 +16,7 @@ humantime-serde = "1.0.1"
 tgcd = { git = "https://github.com/foldu/tgcd", rev = "267f03adb3b39031f0c02ce7920228189004591b", default-features = false }
 directories = "3.0.1"
 inotify = "0.8.3"
-once_cell = "1.4.1"
+once_cell = "1.5.2"
 structopt = "0.3.20"
 anyhow = "1.0.33"
 nix = "0.19.0"
